@@ -2,6 +2,7 @@
 
 **/*.json
 **/*.csv
+**/*.bak
 
 # Ignored files
 
