@@ -183,7 +183,7 @@ class KoinlyConverter:
                     'Recipient': record['Recipient'],
                     'Sender': record['Sender'],
                     'Label': 'authz-reward',
-                    'TxHash': set(),  # Use set to collect unique hashes
+                    'TxHash': '',  # Skip collecting hashes for consolidated entries
                     'Description': '',
                     'tx_count': 0
                 }
@@ -191,14 +191,12 @@ class KoinlyConverter:
             # Add up amounts
             daily_authz[date]['Received Amount'] += float(record['Received Amount'] or 0)
             daily_authz[date]['Fee Amount'] += float(record['Fee Amount'] or 0)
-            daily_authz[date]['TxHash'].add(record['TxHash'])
             daily_authz[date]['tx_count'] += 1
         
         # Convert daily summaries to records
         for date, summary in daily_authz.items():
             tx_count = summary['tx_count']
             summary['Description'] = f"Summarised rewards withdrawn in {tx_count} separate Authz Exec transactions"
-            summary['TxHash'] = ','.join(sorted(summary['TxHash']))  # Convert set to string
             del summary['tx_count']  # Remove helper field
             consolidated_records.append(summary)
         
