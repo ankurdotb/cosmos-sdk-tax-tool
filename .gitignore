@@ -1,5 +1,6 @@
 ### APP-SPECIFIC EXCLUSIONS ###
 
+**/*.json
 
 # Ignored files
 
