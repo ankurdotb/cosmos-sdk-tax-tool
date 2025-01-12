@@ -148,14 +148,11 @@ class KoinlyConverter:
                 if is_sender:
                     record['Sent Amount'] = amount
                     record['Sent Currency'] = 'CHEQ'
-                    record['Label'].add('transfer')
                 elif is_receiver:
                     record['Received Amount'] = amount
                     record['Received Currency'] = 'CHEQ'
-                    record['Label'].add('transfer')
                 else:
                     # If we're neither sender nor receiver, we should still record this as a transfer we're tracking
-                    record['Label'].add('transfer')
                     record['Description'] = f'Transfer of {amount} CHEQ from {msg["from_address"]} to {msg["to_address"]}'
 
             # Rewards
