@@ -99,6 +99,63 @@ class KoinlyConverter:
         
         return total_amount / self.NCHEQ_TO_CHEQ if total_amount > 0 else 0.0
 
+    # Handle redelegation rewards safely
+    def get_redelegate_reward_amount(self, tx_data: Dict, msg: Dict) -> float:
+        """Safely extract reward amount from redelegation transaction"""
+        if not tx_data or not msg:
+            return 0.0
+
+        try:
+            logs = tx_data.get('logs', [])
+            if not logs:
+                self.logger.debug(f"No logs found in redelegation tx {tx_data.get('hash')}")
+                return 0.0
+
+            total_reward = 0.0
+            for log in logs:
+                if not isinstance(log, dict):
+                    continue
+
+                events = log.get('events', [])
+                if not events:
+                    continue
+
+                for event in events:
+                    if not isinstance(event, dict):
+                        continue
+
+                    if event.get('type') == 'coin_received':
+                        attributes = event.get('attributes', [])
+                        if not attributes:
+                            continue
+
+                        amount = None
+                        is_receiver = False
+                        
+                        # Process all attributes in the event
+                        for attr in attributes:
+                            if not isinstance(attr, dict):
+                                continue
+                                
+                            if attr.get('key') == 'receiver' and attr.get('value') == self.address:
+                                is_receiver = True
+                            if attr.get('key') == 'amount' and attr.get('value', '').endswith('ncheq'):
+                                try:
+                                    amount = float(attr.get('value', '0').rstrip('ncheq'))
+                                except (ValueError, TypeError):
+                                    self.logger.debug(f"Invalid amount in redelegation reward: {attr.get('value')}")
+                                    continue
+                        
+                        # Only add reward amount if this event was for our address
+                        if is_receiver and amount:
+                            total_reward += amount
+
+            return total_reward / self.NCHEQ_TO_CHEQ if total_reward > 0 else 0.0
+
+        except Exception as e:
+            self.logger.debug(f"Error processing redelegation rewards for tx {tx_data.get('hash')}: {str(e)}")
+            return 0.0
+
     def get_fee(self, tx_data: Dict) -> float:
         """Extract fee amount from transaction"""
         if tx_data.get('fee', {}).get('amount'):
@@ -255,32 +312,30 @@ class KoinlyConverter:
 
             # Staking Redelegate - record both fee and automatic reward withdrawal
             elif msg_type == '/cosmos.staking.v1beta1.MsgBeginRedelegate':
-                stake_amount = float(msg['amount']['amount']) / self.NCHEQ_TO_CHEQ
-                record['Label'].add('reward')
+                try:
+                    stake_amount = float(msg.get('amount', {}).get('amount', 0)) / self.NCHEQ_TO_CHEQ
+                    record['Label'].add('reward')
+                    
+                    # Get reward amount using the new safe method
+                    reward_amount = self.get_redelegate_reward_amount(tx_data, msg)
+                    if reward_amount > 0:
+                        record['Received Amount'] = reward_amount
+                        record['Received Currency'] = 'CHEQ'
+                    
+                    record['Recipient'].add(self.address)
+                    
+                    # Safe access to validator addresses
+                    val_src = msg.get('validator_src_address', 'unknown_validator')
+                    val_dst = msg.get('validator_dst_address', 'unknown_validator')
+                    record['Description'] = f'Redelegated {stake_amount} CHEQ from {val_src} to {val_dst}'
+                    if reward_amount > 0:
+                        record['Description'] += f' and withdrew {reward_amount} CHEQ in rewards'
                 
-                # Find reward amount from logs
-                logs = tx_data.get('logs', [])
-                for log in logs:
-                    for event in log.get('events', []):
-                        if event.get('type') == 'coin_received':
-                            attributes = event.get('attributes', [])
-                            amount = None
-                            is_receiver = False
-                            
-                            # Check both receiver and amount in the same event
-                            for attr in attributes:
-                                if attr.get('key') == 'receiver' and attr.get('value') == self.address:
-                                    is_receiver = True
-                                if attr.get('key') == 'amount' and attr.get('value', '').endswith('ncheq'):
-                                    amount = float(attr.get('value').rstrip('ncheq'))
-                            
-                            # Only set reward amount if this event was for our address
-                            if is_receiver and amount:
-                                record['Received Amount'] = amount / self.NCHEQ_TO_CHEQ
-                                record['Received Currency'] = 'CHEQ'
-                
-                record['Recipient'].add(self.address)
-                record['Description'] = f'Redelegated {stake_amount} CHEQ from {msg["validator_src_address"]} to {msg["validator_dst_address"]} and withdrew rewards'
+                except Exception as e:
+                    self.logger.debug(f"Error processing redelegation tx {tx_data.get('hash')}: {str(e)}")
+                    # Still create a basic record even if we can't process everything
+                    record['Label'].add('cost')
+                    record['Description'] = 'Redelegation transaction (details unavailable)'
 
             # IBC Transfer
             elif msg_type == '/ibc.applications.transfer.v1.MsgTransfer':
