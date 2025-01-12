@@ -97,6 +97,18 @@ class KoinlyConverter:
     def process_transaction(self, tx: Dict) -> Dict:
         """Convert a single transaction to Koinly format"""
         tx_data = tx['transaction']
+        
+        # Check if transaction contains any non-IBC client update messages
+        messages = tx_data.get('messages', [])
+        has_non_client_updates = any(
+            msg.get('@type') != '/ibc.core.client.v1.MsgUpdateClient'
+            for msg in messages
+        )
+        
+        # Skip entirely if only IBC client updates
+        if not has_non_client_updates:
+            return None
+
         timestamp = self.parse_timestamp(tx_data['block']['timestamp'])
         fee_amount = self.get_fee(tx_data)
         
@@ -106,8 +118,8 @@ class KoinlyConverter:
             'Sent Currency': '',
             'Received Amount': '',
             'Received Currency': '',
-            'Fee Amount': fee_amount if fee_amount > 0 else '',
-            'Fee Currency': 'CHEQ' if fee_amount > 0 else '',
+            'Fee Amount': fee_amount if fee_amount > 0 and has_non_client_updates else '',
+            'Fee Currency': 'CHEQ' if fee_amount > 0 and has_non_client_updates else '',
             'Label': set(),
             'TxHash': tx_data['hash'],
             'Description': '',
@@ -116,8 +128,12 @@ class KoinlyConverter:
         }
 
         # Process messages
-        for msg in tx_data.get('messages', []):
+        for msg in messages:
             msg_type = msg.get('@type')
+            
+            # Skip IBC client update messages
+            if msg_type == '/ibc.core.client.v1.MsgUpdateClient':
+                continue
             
             # Bank Send
             if msg_type == '/cosmos.bank.v1beta1.MsgSend':
