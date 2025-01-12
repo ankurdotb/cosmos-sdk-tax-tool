@@ -255,10 +255,12 @@ class KoinlyConverter:
                     record['Sent Amount'] = amount
                     record['Sent Currency'] = 'CHEQ'
                     record['Recipient'].add(msg['receiver'])
+                    record['Sender'].add(self.address)
                 elif msg['receiver'] == self.address:
                     record['Received Amount'] = amount
                     record['Received Currency'] = 'CHEQ'
                     record['Sender'].add(msg['sender'])
+                    record['Recipient'].add(self.address)
                 record['Label'].add('transfer')
 
             # Authz Exec (need to process wrapped messages)
