@@ -163,6 +163,8 @@ class KoinlyConverter:
                     if reward_amount > 0:
                         record['Received Amount'] = reward_amount
                         record['Received Currency'] = 'CHEQ'
+                record['Recipient'].add(self.address)
+                record['Description'] = 'Withdrawn {reward_amount} CHEQ in staking rewards'
 
             # Governance Vote - only record fee with "cost" label
             elif msg_type == '/cosmos.gov.v1beta1.MsgVote':
@@ -172,6 +174,7 @@ class KoinlyConverter:
                 record['Sent Currency'] = ''
                 record['Received Amount'] = ''
                 record['Received Currency'] = ''
+
                 
             # Staking Delegate - only record fee and description
             elif msg_type == '/cosmos.staking.v1beta1.MsgDelegate':
