@@ -294,7 +294,7 @@ class KoinlyConverter:
                         record['Received Amount'] = reward_amount
                         record['Received Currency'] = 'CHEQ'
                 record['Recipient'].add(self.address)
-                record['Description'] = 'Withdrawn {reward_amount} CHEQ in staking rewards'
+                record['Description'] = f'Withdrawn {reward_amount} CHEQ in staking rewards'
 
             # Governance Vote - only record fee with "cost" label
             elif msg_type == '/cosmos.gov.v1beta1.MsgVote':
