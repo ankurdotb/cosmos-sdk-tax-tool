@@ -214,8 +214,8 @@ class KoinlyConverter:
                                 record['Received Amount'] = amount / self.NCHEQ_TO_CHEQ
                                 record['Received Currency'] = 'CHEQ'
 
-                record['Sender'].add(self.address)
-                record['Description'] = f'Undelegated {stake_amount} CHEQ from {msg["validator_address"]}'
+                record['Recipient'].add(self.address)
+                record['Description'] = f'Undelegated {stake_amount} CHEQ from {msg["validator_address"]} and withdrew rewards'
 
             # Staking Redelegate - record both fee and automatic reward withdrawal
             elif msg_type == '/cosmos.staking.v1beta1.MsgBeginRedelegate':
@@ -243,8 +243,8 @@ class KoinlyConverter:
                                 record['Received Amount'] = amount / self.NCHEQ_TO_CHEQ
                                 record['Received Currency'] = 'CHEQ'
                 
-                record['Sender'].add(self.address)
-                record['Description'] = f'Redelegated {stake_amount} CHEQ from {msg["validator_src_address"]} to {msg["validator_dst_address"]}'
+                record['Recipient'].add(self.address)
+                record['Description'] = f'Redelegated {stake_amount} CHEQ from {msg["validator_src_address"]} to {msg["validator_dst_address"]} and withdrew rewards'
 
             # IBC Transfer
             elif msg_type == '/ibc.applications.transfer.v1.MsgTransfer':
