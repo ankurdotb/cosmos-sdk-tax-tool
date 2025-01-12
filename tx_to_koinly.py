@@ -99,8 +99,7 @@ class KoinlyConverter:
         tx_data = tx['transaction']
         timestamp = self.parse_timestamp(tx_data['block']['timestamp'])
         fee_amount = self.get_fee(tx_data)
-
-        # Initialize record with empty values
+        
         record = {
             'Date': timestamp,
             'Sent Amount': '',
@@ -116,44 +115,114 @@ class KoinlyConverter:
             'Sender': set()
         }
 
-        self.logger.debug(f"\nProcessing transaction {tx_data['hash']}")
+        # Process messages
         for msg in tx_data.get('messages', []):
             msg_type = msg.get('@type')
             
-            if msg_type == '/cosmos.distribution.v1beta1.MsgWithdrawDelegatorReward':
-                self.logger.debug(f"Found reward message: {json.dumps(msg, indent=2)}")
-
-            elif msg_type == '/cosmos.staking.v1beta1.MsgDelegate':
-                amount = float(msg['amount']['amount']) / self.NCHEQ_TO_CHEQ
-                record['Sent Amount'] = amount
-                record['Sent Currency'] = 'CHEQ'
-                record['Label'].add('staking')
-                record['Sender'].add(msg['delegator_address'])
-                record['Recipient'].add(msg['validator_address'])
-
-            elif msg_type == '/cosmos.distribution.v1beta1.MsgWithdrawDelegatorReward':
-                amount = self.get_reward_amount(tx_data)
-                if amount > 0:
-                    record['Received Amount'] = amount
-                    record['Received Currency'] = 'CHEQ'
-                    record['Label'].add('reward')
-                    record['Sender'].add(msg['validator_address'])
-                    record['Recipient'].add(self.address)
-
-            elif msg_type == '/cosmos.bank.v1beta1.MsgSend':
+            # Bank Send
+            if msg_type == '/cosmos.bank.v1beta1.MsgSend':
                 amount = float(msg['amount'][0]['amount']) / self.NCHEQ_TO_CHEQ
                 is_sender = msg['from_address'] == self.address
+                
+                # Always record both sender and recipient
+                record['Sender'].add(msg['from_address'])
+                record['Recipient'].add(msg['to_address'])
                 
                 if is_sender:
                     record['Sent Amount'] = amount
                     record['Sent Currency'] = 'CHEQ'
-                else:
+                elif msg['to_address'] == self.address:
                     record['Received Amount'] = amount
                     record['Received Currency'] = 'CHEQ'
-                
-                record['Sender'].add(msg['from_address'])
-                record['Recipient'].add(msg['to_address'])
 
+            # Rewards
+            elif msg_type == '/cosmos.distribution.v1beta1.MsgWithdrawDelegatorReward':
+                record['Label'].add('reward')
+                if not record['Received Amount']:  # Only get reward amount once per transaction
+                    reward_amount = self.get_reward_amount(tx_data)
+                    if reward_amount > 0:
+                        record['Received Amount'] = reward_amount
+                        record['Received Currency'] = 'CHEQ'
+
+            # Governance Vote - only record fee with "cost" label
+            elif msg_type == '/cosmos.gov.v1beta1.MsgVote':
+                record['Label'].add('cost')
+                # Clear any amounts since we only want to record the fee
+                record['Sent Amount'] = ''
+                record['Sent Currency'] = ''
+                record['Received Amount'] = ''
+                record['Received Currency'] = ''
+                
+            # Staking Delegate - only record fee and description
+            elif msg_type == '/cosmos.staking.v1beta1.MsgDelegate':
+                amount = float(msg['amount']['amount']) / self.NCHEQ_TO_CHEQ
+                record['Label'].add('cost')
+                record['Sent Amount'] = ''
+                record['Sent Currency'] = ''
+                record['Received Amount'] = ''
+                record['Received Currency'] = ''
+                record['Sender'].add(self.address)
+                record['Description'] = f'Delegated {amount} CHEQ to {msg["validator_address"]}'
+
+            # Staking Undelegate - record both fee and automatic reward withdrawal
+            elif msg_type == '/cosmos.staking.v1beta1.MsgUndelegate':
+                stake_amount = float(msg['amount']['amount']) / self.NCHEQ_TO_CHEQ
+                record['Label'].add('reward')
+                
+                # Find reward amount from logs
+                logs = tx_data.get('logs', [])
+                for log in logs:
+                    for event in log.get('events', []):
+                        if event.get('type') == 'coin_received':
+                            attributes = event.get('attributes', [])
+                            amount = None
+                            is_receiver = False
+                            
+                            # Check both receiver and amount in the same event
+                            for attr in attributes:
+                                if attr.get('key') == 'receiver' and attr.get('value') == self.address:
+                                    is_receiver = True
+                                if attr.get('key') == 'amount' and attr.get('value', '').endswith('ncheq'):
+                                    amount = float(attr.get('value').rstrip('ncheq'))
+                            
+                            # Only set reward amount if this event was for our address
+                            if is_receiver and amount:
+                                record['Received Amount'] = amount / self.NCHEQ_TO_CHEQ
+                                record['Received Currency'] = 'CHEQ'
+
+                record['Sender'].add(self.address)
+                record['Description'] = f'Undelegated {stake_amount} CHEQ from {msg["validator_address"]}'
+
+            # Staking Redelegate - record both fee and automatic reward withdrawal
+            elif msg_type == '/cosmos.staking.v1beta1.MsgBeginRedelegate':
+                stake_amount = float(msg['amount']['amount']) / self.NCHEQ_TO_CHEQ
+                record['Label'].add('reward')
+                
+                # Find reward amount from logs
+                logs = tx_data.get('logs', [])
+                for log in logs:
+                    for event in log.get('events', []):
+                        if event.get('type') == 'coin_received':
+                            attributes = event.get('attributes', [])
+                            amount = None
+                            is_receiver = False
+                            
+                            # Check both receiver and amount in the same event
+                            for attr in attributes:
+                                if attr.get('key') == 'receiver' and attr.get('value') == self.address:
+                                    is_receiver = True
+                                if attr.get('key') == 'amount' and attr.get('value', '').endswith('ncheq'):
+                                    amount = float(attr.get('value').rstrip('ncheq'))
+                            
+                            # Only set reward amount if this event was for our address
+                            if is_receiver and amount:
+                                record['Received Amount'] = amount / self.NCHEQ_TO_CHEQ
+                                record['Received Currency'] = 'CHEQ'
+                
+                record['Sender'].add(self.address)
+                record['Description'] = f'Redelegated {stake_amount} CHEQ from {msg["validator_src_address"]} to {msg["validator_dst_address"]}'
+
+            # IBC Transfer
             elif msg_type == '/ibc.applications.transfer.v1.MsgTransfer':
                 amount = float(msg['token']['amount']) / self.NCHEQ_TO_CHEQ
                 is_sender = msg['sender'] == self.address
@@ -161,23 +230,51 @@ class KoinlyConverter:
                 if is_sender:
                     record['Sent Amount'] = amount
                     record['Sent Currency'] = 'CHEQ'
-                else:
+                    record['Recipient'].add(msg['receiver'])
+                elif msg['receiver'] == self.address:
                     record['Received Amount'] = amount
                     record['Received Currency'] = 'CHEQ'
-                
+                    record['Sender'].add(msg['sender'])
                 record['Label'].add('transfer')
-                record['Sender'].add(msg['sender'])
-                record['Recipient'].add(msg['receiver'])
 
-            elif msg_type == '/cosmos.gov.v1beta1.MsgVote':
-                if fee_amount > 0:
-                    record['Label'].add('governance')
+            # Authz Exec (need to process wrapped messages)
+            elif msg_type == '/cosmos.authz.v1beta1.MsgExec':
+                # Process each message within the authz exec
+                for inner_msg in msg.get('msgs', []):
+                    # Recursively process the inner message
+                    # Note: needs the same message processing logic
+                    if inner_msg.get('@type') == '/cosmos.distribution.v1beta1.MsgWithdrawDelegatorReward':
+                        record['Label'].add('reward')
+                        if not record['Received Amount']:
+                            reward_amount = self.get_reward_amount(tx_data)
+                            if reward_amount > 0:
+                                record['Received Amount'] = reward_amount
+                                record['Received Currency'] = 'CHEQ'
+                record['Label'].add('authz')
+
+            # Authz Grant
+            elif msg_type == '/cosmos.authz.v1beta1.MsgGrant':
+                record['Label'].add('cost')
+                # Only record the fee for grants
+                record['Sent Amount'] = ''
+                record['Sent Currency'] = ''
+                record['Received Amount'] = ''
+                record['Received Currency'] = ''
+                record['Sender'].add(msg['granter'])
+                # Add description with authorization details
+                auth_type = msg['grant']['authorization'].get('@type', '').split('.')[-1]  # Get the last part of the type
+                expiry = msg['grant'].get('expiration', '')
+                if expiry:
+                    expiry = datetime.fromisoformat(expiry.replace('Z', '+00:00')).strftime('%Y-%m-%d')
+                    record['Description'] = f'Granted {auth_type} authorization to {msg["grantee"]} until {expiry}'
+                else:
+                    record['Description'] = f'Granted {auth_type} authorization to {msg["grantee"]}'
 
         # Convert sets to comma-separated strings
         record['Label'] = ','.join(sorted(record['Label'])) if record['Label'] else ''
         record['Sender'] = ','.join(sorted(record['Sender'])) if record['Sender'] else ''
         record['Recipient'] = ','.join(sorted(record['Recipient'])) if record['Recipient'] else ''
-
+        
         return record
 
     def convert(self):
