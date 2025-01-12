@@ -302,73 +302,29 @@ class KoinlyConverter:
             return None
 
     def convert(self):
-        transactions = self.load_transactions()
+        # Load transactions from input file
+        with open(self.input_file, 'r', encoding='utf-8') as f:
+            transactions = json.load(f)
+
         koinly_records = []
-        
-        self.logger.info(f"Processing {len(transactions)} transactions...")
-        
         for tx in transactions:
-            try:
-                record = self.process_transaction(tx)
-                if record is None:
-                    continue
-                    
-                # Convert sets to strings for CSV output
-                if isinstance(record['Label'], set):
-                    record['Label'] = ','.join(sorted(record['Label']))
-                if isinstance(record['Recipient'], set):
-                    record['Recipient'] = ','.join(sorted(record['Recipient']))
-                if isinstance(record['Sender'], set):
-                    record['Sender'] = ','.join(sorted(record['Sender']))
+            processed_tx = self.process_transaction(tx)
+            if processed_tx:
+                koinly_records.append(processed_tx)
+                self.logger.debug(f"Added processed transaction: {processed_tx}")
+            else:
+                self.logger.debug(f"Processed transaction is None or invalid: {tx}")
 
-                # Only add records that have some meaningful data
-                if any([
-                    record['Sent Amount'], 
-                    record['Received Amount'], 
-                    record['Fee Amount'],
-                    record.get('Description')  # Include if there's a description
-                ]):
-                    koinly_records.append(record)
-                    self.logger.debug(f"Added processed transaction: {record}")
-            except Exception as e:
-                self.logger.error(f"Error processing transaction {tx.get('transaction', {}).get('hash')}: {str(e)}")
-                continue
-
-        # Sort by timestamp
-        koinly_records.sort(key=lambda x: x['Date'])
-        
-        # Write summarized Authz Exec transactions
-        for date, summary in self.authz_summary.items():
-            record = {
-                'Date': f'{date} 23:59',
-                'Sent Amount': '',
-                'Sent Currency': '',
-                'Received Amount': summary['Received Amount'],
-                'Received Currency': 'CHEQ',
-                'Fee Amount': summary['Fee Amount'],
-                'Fee Currency': 'CHEQ',
-                'Recipient': '',
-                'Sender': self.address,
-                'Label': ','.join(summary['Label']),
-                'TxHash': '',
-                'Description': 'TxHashes: ' + ', '.join(summary['TxHashes'])
-            }
-            koinly_records.append(record)
-
-        # Ensure we're using the correct file output
-        try:
-            with open(self.output_file, 'w', newline='', encoding='utf-8') as csvfile:
-                writer = csv.DictWriter(csvfile, fieldnames=self.KOINLY_HEADERS)
-                writer.writeheader()
-                
-                if koinly_records:
-                    writer.writerows(koinly_records)
-                    self.logger.info(f"Successfully wrote {len(koinly_records)} records to {self.output_file}")
-                else:
-                    self.logger.warning("No records to write to CSV. Check your input file and transaction processing logic.")
-        except IOError as e:
-            self.logger.error(f"Error writing to file {self.output_file}: {str(e)}")
-            raise
+        # Write records to CSV
+        with open(self.output_file, 'w', newline='', encoding='utf-8') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=self.KOINLY_HEADERS)
+            writer.writeheader()
+            
+            if koinly_records:
+                writer.writerows(koinly_records)
+                self.logger.info(f"Successfully wrote {len(koinly_records)} records to {self.output_file}")
+            else:
+                self.logger.warning("No records to write to CSV. Check your input file and transaction processing logic.")
 
 def main():
     parser = argparse.ArgumentParser(description="Convert blockchain transactions to Koinly CSV format")
