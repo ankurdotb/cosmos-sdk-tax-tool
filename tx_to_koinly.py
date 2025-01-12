@@ -96,6 +96,22 @@ class KoinlyConverter:
             self.logger.warning(f"Transaction missing 'hash': {tx}")
             return None
 
+        # Initialize the record dictionary
+        record = {
+            'Date': '',
+            'Sent Amount': '',
+            'Sent Currency': '',
+            'Received Amount': '',
+            'Received Currency': '',
+            'Fee Amount': '',
+            'Fee Currency': 'CHEQ',
+            'Net Worth Amount': '',
+            'Net Worth Currency': '',
+            'Label': set(),
+            'Description': '',
+            'TxHash': tx_hash
+        }
+
         # Add debug logging
         self.logger.debug(f"Processing transaction: {tx_hash}")
 
@@ -277,7 +293,13 @@ class KoinlyConverter:
                 # Add transaction hash to description
                 self.authz_summary[date]['TxHashes'].append(tx_hash)
 
-        return record
+        # Ensure the record is valid and contains necessary data
+        if record['Label']:
+            record['Label'] = ','.join(record['Label'])  # Convert set to comma-separated string
+            return record
+        else:
+            self.logger.debug(f"Skipping transaction {tx_hash} as it has no valid labels")
+            return None
 
     def convert(self):
         transactions = self.load_transactions()
