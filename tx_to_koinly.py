@@ -286,6 +286,19 @@ class KoinlyConverter:
                 else:
                     record['Description'] = f'Granted {auth_type} authorization to {msg["grantee"]}'
 
+            # Authz Revoke
+            elif msg_type == '/cosmos.authz.v1beta1.MsgRevoke':
+                record['Label'].add('cost')
+                # Only record the fee for revokes
+                record['Sent Amount'] = ''
+                record['Sent Currency'] = ''
+                record['Received Amount'] = ''
+                record['Received Currency'] = ''
+                record['Sender'].add(msg['granter'])
+                # Add description with authorization details
+                msg_type_url = msg.get('msg_type_url', '').split('.')[-1]  # Get the last part of the type
+                record['Description'] = f'Revoked {msg_type_url} authorization from {msg["grantee"]}'
+
         # Convert sets to comma-separated strings
         record['Label'] = ','.join(sorted(record['Label'])) if record['Label'] else ''
         record['Sender'] = ','.join(sorted(record['Sender'])) if record['Sender'] else ''
