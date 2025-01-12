@@ -96,6 +96,9 @@ class KoinlyConverter:
             self.logger.warning(f"Transaction missing 'hash': {tx}")
             return None
 
+        # Add debug logging
+        self.logger.debug(f"Processing transaction: {tx_hash}")
+
         tx_data = tx.get('transaction', {})
         if not tx_data:
             self.logger.warning(f"Transaction missing 'transaction' data: {tx}")
@@ -304,6 +307,7 @@ class KoinlyConverter:
                     record.get('Description')  # Include if there's a description
                 ]):
                     koinly_records.append(record)
+                    self.logger.debug(f"Added processed transaction: {record}")
             except Exception as e:
                 self.logger.error(f"Error processing transaction {tx.get('transaction', {}).get('hash')}: {str(e)}")
                 continue
