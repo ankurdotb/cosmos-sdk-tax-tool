@@ -469,6 +469,7 @@ class KoinlyConverter:
         
         return record
 
+    # Convert transactions to Koinly format
     def convert(self):
         transactions = self.load_transactions()
         koinly_records = []
