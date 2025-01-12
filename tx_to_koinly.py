@@ -91,7 +91,7 @@ class KoinlyConverter:
         return fee_amount
 
     def process_transaction(self, tx: Dict) -> Dict:
-        tx_hash = tx.get('hash')
+        tx_hash = tx.get('transaction', {}).get('hash')
         if not tx_hash:
             self.logger.warning(f"Transaction missing 'hash': {tx}")
             return None
