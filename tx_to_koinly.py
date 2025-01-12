@@ -174,7 +174,8 @@ class KoinlyConverter:
                 record['Sent Currency'] = ''
                 record['Received Amount'] = ''
                 record['Received Currency'] = ''
-
+                record['Sender'].add(self.address)
+                record['Description'] = f'Voted on proposal {msg["proposal_id"]}'
                 
             # Staking Delegate - only record fee and description
             elif msg_type == '/cosmos.staking.v1beta1.MsgDelegate':
