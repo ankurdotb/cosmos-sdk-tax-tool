@@ -358,18 +358,32 @@ class KoinlyConverter:
 
             # Authz Exec (need to process wrapped messages)
             elif msg_type == '/cosmos.authz.v1beta1.MsgExec':
-                # Process each message within the authz exec
-                for inner_msg in msg.get('msgs', []):
-                    # Recursively process the inner message
-                    # Note: needs the same message processing logic
-                    if inner_msg.get('@type') == '/cosmos.distribution.v1beta1.MsgWithdrawDelegatorReward':
-                        record['Label'].add('reward')
-                        if not record['Received Amount']:
-                            reward_amount = self.get_reward_amount(tx_data)
-                            if reward_amount > 0:
-                                record['Received Amount'] = reward_amount
-                                record['Received Currency'] = 'CHEQ'
                 record['Label'].add('authz')
+                
+                # Check for any rewards in the coin_received events
+                logs = tx_data.get('logs', [])
+                for log in logs:
+                    for event in log.get('events', []):
+                        if event.get('type') == 'coin_received':
+                            attributes = event.get('attributes', [])
+                            amount = None
+                            is_receiver = False
+                            
+                            # Check both receiver and amount in the same event group
+                            for attr in attributes:
+                                if attr.get('key') == 'receiver' and attr.get('value') == self.address:
+                                    is_receiver = True
+                                if attr.get('key') == 'amount' and attr.get('value', '').endswith('ncheq'):
+                                    try:
+                                        amount = float(attr.get('value').rstrip('ncheq'))
+                                    except (ValueError, TypeError):
+                                        continue
+                                        
+                            # Only set reward amount if this event was for our address
+                            if is_receiver and amount and not record['Received Amount']:
+                                record['Received Amount'] = amount / self.NCHEQ_TO_CHEQ
+                                record['Received Currency'] = 'CHEQ'
+                                record['Label'].add('reward')
 
             # Authz Grant
             elif msg_type == '/cosmos.authz.v1beta1.MsgGrant':
