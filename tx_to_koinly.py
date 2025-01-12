@@ -156,6 +156,54 @@ class KoinlyConverter:
             self.logger.debug(f"Error processing redelegation rewards for tx {tx_data.get('hash')}: {str(e)}")
             return 0.0
 
+    # Rewards collected through Authz Exec transactions need to be consolidated since there are often hundreds per day
+    def consolidate_authz_records(self, records):
+        """Consolidate authz transactions by day"""
+        daily_authz = {}
+        consolidated_records = []
+        
+        for record in records:
+            # If it's not an authz reward transaction, keep as is
+            if 'authz,reward' not in record['Label']:
+                consolidated_records.append(record)
+                continue
+            
+            # Extract date without time
+            date = record['Date'].split()[0]
+            
+            if date not in daily_authz:
+                daily_authz[date] = {
+                    'Date': f"{date} 23:59",
+                    'Sent Amount': '',
+                    'Sent Currency': '',
+                    'Received Amount': 0,
+                    'Received Currency': 'CHEQ',
+                    'Fee Amount': 0,
+                    'Fee Currency': 'CHEQ',
+                    'Recipient': record['Recipient'],
+                    'Sender': record['Sender'],
+                    'Label': 'authz-reward',
+                    'TxHash': set(),  # Use set to collect unique hashes
+                    'Description': '',
+                    'tx_count': 0
+                }
+            
+            # Add up amounts
+            daily_authz[date]['Received Amount'] += float(record['Received Amount'] or 0)
+            daily_authz[date]['Fee Amount'] += float(record['Fee Amount'] or 0)
+            daily_authz[date]['TxHash'].add(record['TxHash'])
+            daily_authz[date]['tx_count'] += 1
+        
+        # Convert daily summaries to records
+        for date, summary in daily_authz.items():
+            tx_count = summary['tx_count']
+            summary['Description'] = f"Summarised rewards withdrawn in {tx_count} separate Authz Exec transactions"
+            summary['TxHash'] = ','.join(sorted(summary['TxHash']))  # Convert set to string
+            del summary['tx_count']  # Remove helper field
+            consolidated_records.append(summary)
+        
+        return consolidated_records
+
     def get_fee(self, tx_data: Dict) -> float:
         """Extract fee amount from transaction"""
         if tx_data.get('fee', {}).get('amount'):
@@ -438,6 +486,9 @@ class KoinlyConverter:
                 self.logger.error(f"Error processing transaction {tx.get('transaction', {}).get('hash')}: {str(e)}")
                 continue
 
+        # Consolidate authz records
+        koinly_records = self.consolidate_authz_records(koinly_records)
+        
         # Sort by timestamp
         koinly_records.sort(key=lambda x: x['Date'])
         
