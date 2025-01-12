@@ -302,29 +302,70 @@ class KoinlyConverter:
             return None
 
     def convert(self):
-        # Load transactions from input file
-        with open(self.input_file, 'r', encoding='utf-8') as f:
-            transactions = json.load(f)
+        try:
+            # Load and process transactions using load_transactions()
+            self.logger.info(f"Loading transactions from {self.input_file}")
+            transactions = self.load_transactions()
 
-        koinly_records = []
-        for tx in transactions:
-            processed_tx = self.process_transaction(tx)
-            if processed_tx:
-                koinly_records.append(processed_tx)
-                self.logger.debug(f"Added processed transaction: {processed_tx}")
-            else:
-                self.logger.debug(f"Processed transaction is None or invalid: {tx}")
+            # Process regular transactions
+            koinly_records = []
+            for tx in transactions:
+                processed_tx = self.process_transaction(tx)
+                if processed_tx:
+                    # Convert sets to strings for CSV writing
+                    if isinstance(processed_tx['Recipient'], set):
+                        processed_tx['Recipient'] = ','.join(processed_tx['Recipient'])
+                    if isinstance(processed_tx['Sender'], set):
+                        processed_tx['Sender'] = ','.join(processed_tx['Sender'])
+                    
+                    koinly_records.append(processed_tx)
+                    self.logger.debug(f"Processed transaction: {processed_tx['TxHash']}")
 
-        # Write records to CSV
-        with open(self.output_file, 'w', newline='', encoding='utf-8') as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=self.KOINLY_HEADERS)
-            writer.writeheader()
-            
-            if koinly_records:
+            # Process authz summary records
+            for date, summary in self.authz_summary.items():
+                if summary['Received Amount'] > 0 or summary['Fee Amount'] > 0:
+                    authz_record = {
+                        'Date': f"{date} 00:00",
+                        'Sent Amount': '',
+                        'Sent Currency': '',
+                        'Received Amount': round(summary['Received Amount'], 6),
+                        'Received Currency': 'CHEQ' if summary['Received Amount'] > 0 else '',
+                        'Fee Amount': round(summary['Fee Amount'], 6) if summary['Fee Amount'] > 0 else '',
+                        'Fee Currency': 'CHEQ' if summary['Fee Amount'] > 0 else '',
+                        'Recipient': self.address,
+                        'Sender': 'staking_rewards',
+                        'Label': ','.join(summary['Label']),
+                        'TxHash': ','.join(summary['TxHashes'][:3]) + ('...' if len(summary['TxHashes']) > 3 else ''),
+                        'Description': f"Aggregated rewards and fees for {date}"
+                    }
+                    koinly_records.append(authz_record)
+                    self.logger.debug(f"Added authz summary for {date}")
+
+            # Sort records by date
+            koinly_records.sort(key=lambda x: x['Date'])
+
+            # Write to CSV
+            self.logger.info(f"Writing {len(koinly_records)} records to {self.output_file}")
+            with open(self.output_file, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.DictWriter(csvfile, fieldnames=self.KOINLY_HEADERS)
+                writer.writeheader()
                 writer.writerows(koinly_records)
-                self.logger.info(f"Successfully wrote {len(koinly_records)} records to {self.output_file}")
-            else:
-                self.logger.warning("No records to write to CSV. Check your input file and transaction processing logic.")
+
+            self.logger.info(f"Successfully processed {len(transactions)} transactions into {len(koinly_records)} Koinly records")
+            
+            # Log summary statistics
+            sent_total = sum(float(r['Sent Amount']) for r in koinly_records if r['Sent Amount'])
+            received_total = sum(float(r['Received Amount']) for r in koinly_records if r['Received Amount'])
+            fees_total = sum(float(r['Fee Amount']) for r in koinly_records if r['Fee Amount'])
+            
+            self.logger.info(f"Summary:")
+            self.logger.info(f"Total CHEQ sent: {round(sent_total, 6)}")
+            self.logger.info(f"Total CHEQ received: {round(received_total, 6)}")
+            self.logger.info(f"Total fees paid: {round(fees_total, 6)}")
+
+        except Exception as e:
+            self.logger.error(f"Error during conversion: {str(e)}")
+            raise
 
 def main():
     parser = argparse.ArgumentParser(description="Convert blockchain transactions to Koinly CSV format")
