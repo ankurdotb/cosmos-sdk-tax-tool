@@ -182,7 +182,7 @@ class KoinlyConverter:
                     'Fee Currency': 'CHEQ',
                     'Recipient': record['Recipient'],
                     'Sender': record['Sender'],
-                    'Label': 'authz-reward',
+                    'Label': 'reward',
                     'TxHash': '',  # Skip collecting hashes for consolidated entries
                     'Description': '',
                     'tx_count': 0
