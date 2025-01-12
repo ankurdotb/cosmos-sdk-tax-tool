@@ -58,35 +58,46 @@ class KoinlyConverter:
         return dt.strftime('%Y-%m-%d %H:%M')
 
     def get_reward_amount(self, tx_data: Dict) -> float:
-        """Extract reward amount from transaction logs"""
-        if self.debug_hash and tx_data['hash'] == self.debug_hash:
-            self.logger.debug(f"\nProcessing transaction: {tx_data['hash']}")
-            self.logger.debug(f"Full transaction data: {json.dumps(tx_data, indent=2)}")
+        """Extract reward amount from transaction logs with better null handling"""
+        if not tx_data:
+            return 0.0
             
+        if self.debug_hash and tx_data.get('hash') == self.debug_hash:
+            self.logger.debug(f"\nProcessing transaction: {tx_data.get('hash')}")
+            self.logger.debug(f"Full transaction data: {json.dumps(tx_data, indent=2)}")
+        
         logs = tx_data.get('logs', [])
-        self.logger.debug(f"Found {len(logs)} log entries")
-        
         if not logs:
-            self.logger.debug("No logs found!")
-            self.logger.debug(f"Transaction data: {json.dumps(tx_data, indent=2)}")
-        
+            self.logger.debug(f"No logs found in tx {tx_data.get('hash')}")
+            return 0.0
+            
         total_amount = 0
         for log in logs:
-            self.logger.debug(f"\nChecking log entry: {json.dumps(log, indent=2)}")
-            for event in log.get('events', []):
-                self.logger.debug(f"Event type: {event.get('type')}")
+            if not isinstance(log, dict):
+                continue
+                
+            events = log.get('events', [])
+            if not events:
+                continue
+                
+            for event in events:
+                if not isinstance(event, dict):
+                    continue
+                    
                 if event.get('type') == 'withdraw_rewards':
                     attrs = event.get('attributes', [])
-                    self.logger.debug(f"Found withdraw_rewards event with {len(attrs)} attributes")
                     for attr in attrs:
+                        if not isinstance(attr, dict):
+                            continue
                         if attr.get('key') == 'amount' and attr.get('value', '').endswith('ncheq'):
-                            amount = float(attr['value'].rstrip('ncheq'))
-                            total_amount += amount
-                            self.logger.debug(f"Added amount: {amount} ncheq")
+                            try:
+                                amount = float(attr['value'].rstrip('ncheq'))
+                                total_amount += amount
+                            except (ValueError, TypeError):
+                                self.logger.debug(f"Invalid amount value in tx {tx_data.get('hash')}")
+                                continue
         
-        final_amount = total_amount / self.NCHEQ_TO_CHEQ if total_amount > 0 else 0
-        self.logger.debug(f"Final total amount: {final_amount} CHEQ")
-        return final_amount
+        return total_amount / self.NCHEQ_TO_CHEQ if total_amount > 0 else 0.0
 
     def get_fee(self, tx_data: Dict) -> float:
         """Extract fee amount from transaction"""
@@ -96,10 +107,17 @@ class KoinlyConverter:
 
     def process_transaction(self, tx: Dict) -> Dict:
         """Convert a single transaction to Koinly format"""
-        tx_data = tx['transaction']
+        tx_data = tx.get('transaction', {})
+        if not tx_data:
+            self.logger.debug(f"Empty transaction data found")
+            return None
         
         # Check if transaction contains any non-IBC client update messages
         messages = tx_data.get('messages', [])
+        if not messages:
+            self.logger.debug(f"No messages found in transaction {tx_data.get('hash')}")
+            return None
+            
         has_non_client_updates = any(
             msg.get('@type') != '/ibc.core.client.v1.MsgUpdateClient'
             for msg in messages
@@ -109,7 +127,7 @@ class KoinlyConverter:
         if not has_non_client_updates:
             return None
 
-        timestamp = self.parse_timestamp(tx_data['block']['timestamp'])
+        timestamp = self.parse_timestamp(tx_data.get('block', {}).get('timestamp', ''))
         fee_amount = self.get_fee(tx_data)
         
         record = {
@@ -121,15 +139,22 @@ class KoinlyConverter:
             'Fee Amount': fee_amount if fee_amount > 0 and has_non_client_updates else '',
             'Fee Currency': 'CHEQ' if fee_amount > 0 and has_non_client_updates else '',
             'Label': set(),
-            'TxHash': tx_data['hash'],
+            'TxHash': tx_data.get('hash', ''),
             'Description': '',
             'Recipient': set(),
             'Sender': set()
         }
 
-        # Process messages
+        # Process messages with null checks
         for msg in messages:
+            if not isinstance(msg, dict):
+                self.logger.debug(f"Invalid message format in tx {tx_data.get('hash')}: {msg}")
+                continue
+
             msg_type = msg.get('@type')
+            if not msg_type:
+                self.logger.debug(f"Message missing @type in tx {tx_data.get('hash')}")
+                continue
             
             # Skip IBC client update messages
             if msg_type == '/ibc.core.client.v1.MsgUpdateClient':
