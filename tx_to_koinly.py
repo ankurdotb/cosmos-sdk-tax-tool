@@ -1,51 +1,53 @@
 #!/usr/bin/env python3
 
-import logging
-import csv
-import argparse
 import json
+import csv
 from datetime import datetime
+import argparse
 from typing import List, Dict, Any
+from pathlib import Path
+import logging
 
 class KoinlyConverter:
-    # In the KoinlyConverter class initialization
-    def __init__(self, input_file: str, output_file: str, address: str, debug: bool = False):
+    def __init__(self, input_file: str, output_file: str, address: str, debug: bool = False, debug_hash: str = None):
         self.input_file = input_file
         self.output_file = output_file
         self.address = address
+        self.debug_hash = debug_hash
         self.NCHEQ_TO_CHEQ = 1_000_000_000  # 1 CHEQ = 10^9 ncheq
         self.KOINLY_HEADERS = [
             'Date', 'Sent Amount', 'Sent Currency', 'Received Amount', 'Received Currency',
             'Fee Amount', 'Fee Currency', 'Recipient', 'Sender', 'Label', 'TxHash', 'Description'
         ]
-        self.authz_summary = {}
 
-        # Set up logging to terminal
+        # Set up logging
         self.logger = logging.getLogger('koinly_converter')
         self.logger.setLevel(logging.DEBUG if debug else logging.INFO)
         
-        # Console handler
+        # Console handler with minimal output
         console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.DEBUG if debug else logging.INFO)
-        console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+        console_handler.setLevel(logging.INFO)
+        console_handler.setFormatter(logging.Formatter('%(message)s'))
         self.logger.addHandler(console_handler)
 
+        # File handler with detailed output if debug is enabled
+        if debug:
+            file_handler = logging.FileHandler('koinly_debug.log', mode='w')  # 'w' mode overwrites the file
+            file_handler.setLevel(logging.DEBUG)
+            file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+            self.logger.addHandler(file_handler)
+
     def load_transactions(self) -> List[Dict[str, Any]]:
+        """Load transactions and deduplicate by hash"""
         with open(self.input_file, 'r') as f:
             transactions = json.load(f)
         
+        # Use a dictionary to deduplicate by hash
         unique_txs = {}
-        skipped_txs = 0
         for tx in transactions:
-            tx_hash = tx.get('transaction', {}).get('hash')
-            if tx_hash:
-                if tx_hash not in unique_txs:
-                    unique_txs[tx_hash] = tx
-            else:
-                skipped_txs += 1
-        
-        if skipped_txs > 0:
-            self.logger.debug(f"Skipped {skipped_txs} transactions missing hash")
+            tx_hash = tx['transaction']['hash']
+            if tx_hash not in unique_txs:
+                unique_txs[tx_hash] = tx
         
         self.logger.info(f"Loaded {len(transactions)} transactions, {len(unique_txs)} unique")
         return list(unique_txs.values())
@@ -56,171 +58,102 @@ class KoinlyConverter:
         return dt.strftime('%Y-%m-%d %H:%M')
 
     def get_reward_amount(self, tx_data: Dict) -> float:
-        """Extract reward amount from transaction logs, summing all rewards in the transaction"""
-        total_amount = 0
+        """Extract reward amount from transaction logs"""
+        if self.debug_hash and tx_data['hash'] == self.debug_hash:
+            self.logger.debug(f"\nProcessing transaction: {tx_data['hash']}")
+            self.logger.debug(f"Full transaction data: {json.dumps(tx_data, indent=2)}")
+            
         logs = tx_data.get('logs', [])
+        self.logger.debug(f"Found {len(logs)} log entries")
         
         if not logs:
-            return 0.0
+            self.logger.debug("No logs found!")
+            self.logger.debug(f"Transaction data: {json.dumps(tx_data, indent=2)}")
         
+        total_amount = 0
         for log in logs:
+            self.logger.debug(f"\nChecking log entry: {json.dumps(log, indent=2)}")
             for event in log.get('events', []):
-                if event.get('type') == 'coin_received':
-                    attributes = event.get('attributes', [])
-                    amount = None
-                    is_receiver = False
-                    
-                    for attr in attributes:
-                        if attr.get('key') == 'receiver' and attr.get('value') == self.address:
-                            is_receiver = True
+                self.logger.debug(f"Event type: {event.get('type')}")
+                if event.get('type') == 'withdraw_rewards':
+                    attrs = event.get('attributes', [])
+                    self.logger.debug(f"Found withdraw_rewards event with {len(attrs)} attributes")
+                    for attr in attrs:
                         if attr.get('key') == 'amount' and attr.get('value', '').endswith('ncheq'):
-                            amount = float(attr.get('value').rstrip('ncheq'))
-                    
-                    if is_receiver and amount:
-                        total_amount += amount / self.NCHEQ_TO_CHEQ
+                            amount = float(attr['value'].rstrip('ncheq'))
+                            total_amount += amount
+                            self.logger.debug(f"Added amount: {amount} ncheq")
         
-        return total_amount
+        final_amount = total_amount / self.NCHEQ_TO_CHEQ if total_amount > 0 else 0
+        self.logger.debug(f"Final total amount: {final_amount} CHEQ")
+        return final_amount
 
     def get_fee(self, tx_data: Dict) -> float:
         """Extract fee amount from transaction"""
-        fee_amount = 0
-        fees = tx_data.get('tx', {}).get('auth_info', {}).get('fee', {}).get('amount', [])
-        for fee in fees:
-            if fee.get('denom') == 'ncheq':
-                fee_amount += float(fee.get('amount')) / self.NCHEQ_TO_CHEQ
-        return fee_amount
+        if tx_data.get('fee', {}).get('amount'):
+            return float(tx_data['fee']['amount'][0]['amount']) / self.NCHEQ_TO_CHEQ
+        return 0.0
 
     def process_transaction(self, tx: Dict) -> Dict:
-        tx_hash = tx.get('transaction', {}).get('hash')
-        if not tx_hash:
-            self.logger.warning(f"Transaction missing 'hash': {tx}")
-            return None
-
-        # Initialize the record dictionary
-        record = {
-            'Date': '',
-            'Sent Amount': '',
-            'Sent Currency': '',
-            'Received Amount': '',
-            'Received Currency': '',
-            'Fee Amount': '',
-            'Fee Currency': 'CHEQ',
-            'Net Worth Amount': '',
-            'Net Worth Currency': '',
-            'Label': set(),
-            'Description': '',
-            'TxHash': tx_hash
-        }
-
-        # Add debug logging
-        self.logger.debug(f"Processing transaction: {tx_hash}")
-
-        tx_data = tx.get('transaction', {})
-        if not tx_data:
-            self.logger.warning(f"Transaction missing 'transaction' data: {tx}")
-            return None
-
-        messages = tx_data.get('tx', {}).get('body', {}).get('messages', [])
-        has_non_client_updates = any(
-            msg.get('@type') != '/ibc.core.client.v1.MsgUpdateClient'
-            for msg in messages
-        )
-        
-        # Skip entirely if only IBC client updates
-        if not has_non_client_updates:
-            return None
-
+        """Convert a single transaction to Koinly format"""
+        tx_data = tx['transaction']
         timestamp = self.parse_timestamp(tx_data['block']['timestamp'])
         fee_amount = self.get_fee(tx_data)
-        
+
+        # Initialize record with empty values
         record = {
             'Date': timestamp,
             'Sent Amount': '',
             'Sent Currency': '',
             'Received Amount': '',
             'Received Currency': '',
-            'Fee Amount': fee_amount if fee_amount > 0 and has_non_client_updates else '',
-            'Fee Currency': 'CHEQ' if fee_amount > 0 and has_non_client_updates else '',
+            'Fee Amount': fee_amount if fee_amount > 0 else '',
+            'Fee Currency': 'CHEQ' if fee_amount > 0 else '',
             'Label': set(),
-            'TxHash': tx_hash,
+            'TxHash': tx_data['hash'],
             'Description': '',
             'Recipient': set(),
             'Sender': set()
         }
 
-        # Process messages
-        for msg in messages:
+        self.logger.debug(f"\nProcessing transaction {tx_data['hash']}")
+        for msg in tx_data.get('messages', []):
             msg_type = msg.get('@type')
             
-            # Skip IBC client update messages
-            if msg_type == '/ibc.core.client.v1.MsgUpdateClient':
-                record['Label'].add('discard')
-                record['Description'] = 'IBC client update'
-                continue
-            
-            # Bank Send
-            if msg_type == '/cosmos.bank.v1beta1.MsgSend':
+            if msg_type == '/cosmos.distribution.v1beta1.MsgWithdrawDelegatorReward':
+                self.logger.debug(f"Found reward message: {json.dumps(msg, indent=2)}")
+
+            elif msg_type == '/cosmos.staking.v1beta1.MsgDelegate':
+                amount = float(msg['amount']['amount']) / self.NCHEQ_TO_CHEQ
+                record['Sent Amount'] = amount
+                record['Sent Currency'] = 'CHEQ'
+                record['Label'].add('staking')
+                record['Sender'].add(msg['delegator_address'])
+                record['Recipient'].add(msg['validator_address'])
+
+            elif msg_type == '/cosmos.distribution.v1beta1.MsgWithdrawDelegatorReward':
+                amount = self.get_reward_amount(tx_data)
+                if amount > 0:
+                    record['Received Amount'] = amount
+                    record['Received Currency'] = 'CHEQ'
+                    record['Label'].add('reward')
+                    record['Sender'].add(msg['validator_address'])
+                    record['Recipient'].add(self.address)
+
+            elif msg_type == '/cosmos.bank.v1beta1.MsgSend':
                 amount = float(msg['amount'][0]['amount']) / self.NCHEQ_TO_CHEQ
                 is_sender = msg['from_address'] == self.address
-                
-                # Always record both sender and recipient
-                record['Sender'].add(msg['from_address'])
-                record['Recipient'].add(msg['to_address'])
                 
                 if is_sender:
                     record['Sent Amount'] = amount
                     record['Sent Currency'] = 'CHEQ'
-                elif msg['to_address'] == self.address:
+                else:
                     record['Received Amount'] = amount
                     record['Received Currency'] = 'CHEQ'
-                record['Label'].add('transfer')
+                
+                record['Sender'].add(msg['from_address'])
+                record['Recipient'].add(msg['to_address'])
 
-            # Staking Delegate - only record fee and description
-            elif msg_type == '/cosmos.staking.v1beta1.MsgDelegate':
-                amount = msg.get('amount')
-                if amount:
-                    amount_value = float(amount['amount']) / self.NCHEQ_TO_CHEQ
-                    record['Label'].add('cost')
-                    record['Sent Amount'] = ''
-                    record['Sent Currency'] = ''
-                    record['Received Amount'] = ''
-                    record['Received Currency'] = ''
-                    record['Sender'].add(self.address)
-                    record['Description'] = f'Delegated {amount_value} CHEQ to {msg["validator_address"]}'
-                else:
-                    print(f"Warning: 'amount' is None for transaction {tx_hash}")
-
-            # Cancel unbonding - only record fee and description
-            elif msg_type == '/cosmos.staking.v1beta1.MsgCancelUnbondingDelegation':
-                amount = msg.get('amount')
-                if amount:
-                    amount_value = float(amount['amount']) / self.NCHEQ_TO_CHEQ
-                    record['Label'].add('cost')
-                    record['Sent Amount'] = ''
-                    record['Sent Currency'] = ''
-                    record['Received Amount'] = ''
-                    record['Received Currency'] = ''
-                    record['Sender'].add(self.address)
-                    record['Description'] = f'Cancelled unbonding delegation {amount_value} CHEQ from {msg["validator_address"]}'
-                else:
-                    print(f"Warning: 'amount' is None for transaction {tx_hash}")
-
-            # Staking Redelegate - only record fee and description
-            elif msg_type == '/cosmos.staking.v1beta1.MsgBeginRedelegate':
-                amount = msg.get('amount')
-                if amount:
-                    amount_value = float(amount['amount']) / self.NCHEQ_TO_CHEQ
-                    record['Label'].add('cost')
-                    record['Sent Amount'] = ''
-                    record['Sent Currency'] = ''
-                    record['Received Amount'] = ''
-                    record['Received Currency'] = ''
-                    record['Sender'].add(self.address)
-                    record['Description'] = f'Redelegated {amount_value} CHEQ from {msg["validator_src_address"]} to {msg["validator_dst_address"]}'
-                else:
-                    print(f"Warning: 'amount' is None for transaction {tx_hash}")
-
-            # IBC Transfer
             elif msg_type == '/ibc.applications.transfer.v1.MsgTransfer':
                 amount = float(msg['token']['amount']) / self.NCHEQ_TO_CHEQ
                 is_sender = msg['sender'] == self.address
@@ -228,155 +161,63 @@ class KoinlyConverter:
                 if is_sender:
                     record['Sent Amount'] = amount
                     record['Sent Currency'] = 'CHEQ'
-                    record['Recipient'].add(msg['receiver'])
-                elif msg['receiver'] == self.address:
+                else:
                     record['Received Amount'] = amount
                     record['Received Currency'] = 'CHEQ'
-                    record['Sender'].add(msg['sender'])
+                
                 record['Label'].add('transfer')
+                record['Sender'].add(msg['sender'])
+                record['Recipient'].add(msg['receiver'])
 
-            # Authz Exec (need to process wrapped messages)
-            elif msg_type == '/cosmos.authz.v1beta1.MsgExec':
-                date = timestamp.split(' ')[0]
-                if date not in self.authz_summary:
-                    self.authz_summary[date] = {
-                        'Received Amount': 0,
-                        'Fee Amount': 0,
-                        'TxHashes': [],
-                        'Label': set(),
-                        'Description': ''
-                    }
+            elif msg_type == '/cosmos.gov.v1beta1.MsgVote':
+                if fee_amount > 0:
+                    record['Label'].add('governance')
 
-                # Process each message within the authz exec
-                for inner_msg in msg.get('msgs', []):
-                    inner_msg_type = inner_msg.get('@type')
-                    
-                    # Handle Withdraw Delegator Reward
-                    if inner_msg_type == '/cosmos.distribution.v1beta1.MsgWithdrawDelegatorReward':
-                        reward_amount = self.get_reward_amount(tx_data)
-                        if reward_amount > 0:
-                            self.authz_summary[date]['Received Amount'] += reward_amount
-                            self.authz_summary[date]['Label'].add('reward')
+        # Convert sets to comma-separated strings
+        record['Label'] = ','.join(sorted(record['Label'])) if record['Label'] else ''
+        record['Sender'] = ','.join(sorted(record['Sender'])) if record['Sender'] else ''
+        record['Recipient'] = ','.join(sorted(record['Recipient'])) if record['Recipient'] else ''
 
-                    # Handle Delegate
-                    elif inner_msg_type == '/cosmos.staking.v1beta1.MsgDelegate':
-                        amount = inner_msg.get('amount')
-                        if amount:
-                            amount_value = float(amount['amount']) / self.NCHEQ_TO_CHEQ
-                            self.authz_summary[date]['Label'].add('cost')
-
-                # Extract coins_received amount from logs
-                logs = tx_data.get('logs', [])
-                for log in logs:
-                    for event in log.get('events', []):
-                        if event.get('type') == 'coin_received':
-                            attributes = event.get('attributes', [])
-                            amount = None
-                            is_receiver = False
-                            
-                            # Check both receiver and amount in the same event
-                            for attr in attributes:
-                                if attr.get('key') == 'receiver' and attr.get('value') == self.address:
-                                    is_receiver = True
-                                if attr.get('key') == 'amount' and attr.get('value', '').endswith('ncheq'):
-                                    amount = float(attr.get('value').rstrip('ncheq'))
-                            
-                            # Only set received amount if this event was for our address
-                            if is_receiver and amount:
-                                self.authz_summary[date]['Received Amount'] += amount / self.NCHEQ_TO_CHEQ
-                                self.authz_summary[date]['Label'].add('authz')
-
-                # Sum up fees
-                fee_amount = self.get_fee(tx_data)
-                self.authz_summary[date]['Fee Amount'] += fee_amount
-
-                # Add transaction hash to description
-                self.authz_summary[date]['TxHashes'].append(tx_hash)
-
-        # Ensure the record is valid and contains necessary data
-        if record['Label']:
-            record['Label'] = ','.join(record['Label'])  # Convert set to comma-separated string
-            return record
-        else:
-            self.logger.debug(f"Skipping transaction {tx_hash} as it has no valid labels")
-            return None
+        return record
 
     def convert(self):
-        try:
-            # Load and process transactions using load_transactions()
-            self.logger.info(f"Loading transactions from {self.input_file}")
-            transactions = self.load_transactions()
+        transactions = self.load_transactions()
+        koinly_records = []
+        
+        self.logger.info(f"Processing {len(transactions)} transactions...")
+        
+        for tx in transactions:
+            try:
+                record = self.process_transaction(tx)
+                if any([record['Sent Amount'], record['Received Amount'], record['Fee Amount']]):
+                    koinly_records.append(record)
+            except Exception as e:
+                self.logger.error(f"Error processing transaction {tx.get('transaction', {}).get('hash')}: {str(e)}")
+                continue
 
-            # Process regular transactions
-            koinly_records = []
-            for tx in transactions:
-                processed_tx = self.process_transaction(tx)
-                if processed_tx:
-                    # Convert sets to strings for CSV writing
-                    if isinstance(processed_tx['Recipient'], set):
-                        processed_tx['Recipient'] = ','.join(processed_tx['Recipient'])
-                    if isinstance(processed_tx['Sender'], set):
-                        processed_tx['Sender'] = ','.join(processed_tx['Sender'])
-                    
-                    koinly_records.append(processed_tx)
-                    self.logger.debug(f"Processed transaction: {processed_tx['TxHash']}")
-
-            # Process authz summary records
-            for date, summary in self.authz_summary.items():
-                if summary['Received Amount'] > 0 or summary['Fee Amount'] > 0:
-                    authz_record = {
-                        'Date': f"{date} 00:00",
-                        'Sent Amount': '',
-                        'Sent Currency': '',
-                        'Received Amount': round(summary['Received Amount'], 6),
-                        'Received Currency': 'CHEQ' if summary['Received Amount'] > 0 else '',
-                        'Fee Amount': round(summary['Fee Amount'], 6) if summary['Fee Amount'] > 0 else '',
-                        'Fee Currency': 'CHEQ' if summary['Fee Amount'] > 0 else '',
-                        'Recipient': self.address,
-                        'Sender': 'staking_rewards',
-                        'Label': ','.join(summary['Label']),
-                        'TxHash': ','.join(summary['TxHashes'][:3]) + ('...' if len(summary['TxHashes']) > 3 else ''),
-                        'Description': f"Aggregated rewards and fees for {date}"
-                    }
-                    koinly_records.append(authz_record)
-                    self.logger.debug(f"Added authz summary for {date}")
-
-            # Sort records by date
-            koinly_records.sort(key=lambda x: x['Date'])
-
-            # Write to CSV
-            self.logger.info(f"Writing {len(koinly_records)} records to {self.output_file}")
-            with open(self.output_file, 'w', newline='', encoding='utf-8') as csvfile:
-                writer = csv.DictWriter(csvfile, fieldnames=self.KOINLY_HEADERS)
-                writer.writeheader()
-                writer.writerows(koinly_records)
-
-            self.logger.info(f"Successfully processed {len(transactions)} transactions into {len(koinly_records)} Koinly records")
-            
-            # Log summary statistics
-            sent_total = sum(float(r['Sent Amount']) for r in koinly_records if r['Sent Amount'])
-            received_total = sum(float(r['Received Amount']) for r in koinly_records if r['Received Amount'])
-            fees_total = sum(float(r['Fee Amount']) for r in koinly_records if r['Fee Amount'])
-            
-            self.logger.info(f"Summary:")
-            self.logger.info(f"Total CHEQ sent: {round(sent_total, 6)}")
-            self.logger.info(f"Total CHEQ received: {round(received_total, 6)}")
-            self.logger.info(f"Total fees paid: {round(fees_total, 6)}")
-
-        except Exception as e:
-            self.logger.error(f"Error during conversion: {str(e)}")
-            raise
+        # Sort by timestamp
+        koinly_records.sort(key=lambda x: x['Date'])
+        
+        # Write to CSV (with 'w' mode to overwrite)
+        with open(self.output_file, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=self.KOINLY_HEADERS)
+            writer.writeheader()
+            writer.writerows(koinly_records)
+        
+        self.logger.info(f"Processed {len(koinly_records)} records")
+        self.logger.info(f"Output saved to {self.output_file}")
 
 def main():
     parser = argparse.ArgumentParser(description="Convert blockchain transactions to Koinly CSV format")
     parser.add_argument("--input", required=True, help="Input JSON file from GraphQL fetch")
     parser.add_argument("--output", help="Output CSV file name", default="koinly_export.csv")
     parser.add_argument("--address", required=True, help="Your wallet address")
-    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging to file")
+    parser.add_argument("--hash", help="Transaction hash to debug")
     
     args = parser.parse_args()
     
-    converter = KoinlyConverter(args.input, args.output, args.address, args.debug)
+    converter = KoinlyConverter(args.input, args.output, args.address, args.debug, args.hash)
     converter.convert()
 
 if __name__ == "__main__":
