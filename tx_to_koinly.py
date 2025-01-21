@@ -164,7 +164,7 @@ class KoinlyConverter:
         
         for record in records:
             # If it's not an authz reward transaction, keep as is
-            if 'authz,reward' not in record['Label']:
+            if not (('authz,reward' in record['Label']) or ('reward,authz' in record['Label'])):
                 consolidated_records.append(record)
                 continue
             
@@ -182,7 +182,7 @@ class KoinlyConverter:
                     'Fee Currency': 'CHEQ',
                     'Recipient': record['Recipient'],
                     'Sender': record['Sender'],
-                    'Label': 'reward',
+                    'Label': 'reward',  # Simplified from 'authz,reward' for consolidated records
                     'TxHash': '',  # Skip collecting hashes for consolidated entries
                     'Description': '',
                     'tx_count': 0
