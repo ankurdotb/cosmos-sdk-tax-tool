@@ -261,7 +261,8 @@ class KoinlyConverter:
             
             # Skip IBC client update messages
             if msg_type == '/ibc.core.client.v1.MsgUpdateClient':
-                record['Description'] = 'IBC client update (ignored)'
+                record['Label'].add('cost')
+                record['Description'] = 'IBC client update'
                 continue
             
             # Bank Send
