@@ -261,7 +261,6 @@ class KoinlyConverter:
             
             # Skip IBC client update messages
             if msg_type == '/ibc.core.client.v1.MsgUpdateClient':
-                record['Label'].add('discard')
                 record['Description'] = 'IBC client update (ignored)'
                 continue
             
@@ -294,7 +293,6 @@ class KoinlyConverter:
                         record['Received Amount'] = reward_amount
                         record['Received Currency'] = 'CHEQ'
                 record['Recipient'].add(self.address)
-                record['Description'] = f'Withdrawn {reward_amount} CHEQ in staking rewards'
 
             # Governance Vote - only record fee with "cost" label
             elif msg_type == '/cosmos.gov.v1beta1.MsgVote':
