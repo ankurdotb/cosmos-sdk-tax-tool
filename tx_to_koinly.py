@@ -305,15 +305,16 @@ class KoinlyConverter:
                 record['Sender'].add(self.address)
                 record['Description'] = f'Voted on proposal {msg["proposal_id"]}'
                 
-            # Staking Delegate - only record fee and description
+            # Staking Delegate
             elif msg_type == '/cosmos.staking.v1beta1.MsgDelegate':
                 amount = float(msg['amount']['amount']) / self.NCHEQ_TO_CHEQ
-                record['Label'].add('cost')
-                record['Sent Amount'] = ''
-                record['Sent Currency'] = ''
+                record['Label'].add('stake')
+                record['Sent Amount'] = amount
+                record['Sent Currency'] = 'CHEQ'
                 record['Received Amount'] = ''
                 record['Received Currency'] = ''
                 record['Sender'].add(self.address)
+                record['Recipient'] = msg['validator_address']
                 record['Description'] = f'Delegated {amount} CHEQ to {msg["validator_address"]}'
             
             # Cancel unbonding - only record fee and description
