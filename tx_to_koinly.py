@@ -309,9 +309,9 @@ class KoinlyConverter:
             # Staking Delegate
             elif msg_type == '/cosmos.staking.v1beta1.MsgDelegate':
                 amount = float(msg['amount']['amount']) / self.NCHEQ_TO_CHEQ
-                record['Label'].add('stake')
-                record['Sent Amount'] = amount
-                record['Sent Currency'] = 'CHEQ'
+                record['Label'].add('cost')
+                record['Sent Amount'] = ''
+                record['Sent Currency'] = ''
                 record['Received Amount'] = ''
                 record['Received Currency'] = ''
                 record['Sender'].add(self.address)
@@ -322,8 +322,8 @@ class KoinlyConverter:
             elif msg_type == '/cosmos.staking.v1beta1.MsgCancelUnbondingDelegation':
                 amount = float(msg['amount']['amount']) / self.NCHEQ_TO_CHEQ
                 record['Label'].add('stake')
-                record['Sent Amount'] = amount
-                record['Sent Currency'] = 'CHEQ'
+                record['Sent Amount'] = ''
+                record['Sent Currency'] = ''
                 record['Received Amount'] = ''
                 record['Received Currency'] = ''
                 record['Sender'].add(self.address)
