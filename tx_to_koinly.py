@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
 
+"""
+This script converts blockchain transaction data from JSON format to Koinly-compatible CSV.
+It processes various transaction types including rewards, delegations, transfers, and IBC transactions.
+The output follows Koinly's import format for easier tax reporting and portfolio tracking.
+
+Usage:
+    python tx_to_koinly.py --input transactions.json --output koinly_export.csv --address your_wallet_address
+"""
+
 import json
 import csv
 from datetime import datetime
@@ -10,10 +19,31 @@ import logging
 
 class KoinlyConverter:
     def __init__(self, input_file: str, output_file: str, address: str, debug: bool = False, debug_hash: str = None):
+        """
+        Converts blockchain transaction data to Koinly-compatible format.
+
+        This class handles:
+        - Loading and deduplicating transactions
+        - Converting blockchain timestamps to Koinly format
+        - Extracting and processing different transaction types (rewards, delegations, transfers)
+        - Consolidating multiple reward claims from Authz transactions
+        - Converting amounts from ncheq (nano CHEQ) to CHEQ
+        """
         self.input_file = input_file
         self.output_file = output_file
         self.address = address
         self.debug_hash = debug_hash
+
+        """
+        NCHEQ_TO_CHEQ: Conversion factor from nano-CHEQ to CHEQ (10^9)
+        KOINLY_HEADERS: Required CSV column headers for Koinly import format:
+            - Date: Transaction timestamp
+            - Sent/Received Amount/Currency: Transaction values
+            - Fee Amount/Currency: Transaction fees
+            - Label: Transaction type classification
+            - Description: Human-readable transaction details
+            - TxHash: Unique transaction identifier
+        """
         self.NCHEQ_TO_CHEQ = 1_000_000_000  # 1 CHEQ = 10^9 ncheq
         self.KOINLY_HEADERS = [
             'Date', 'Sent Amount', 'Sent Currency', 'Received Amount', 'Received Currency',
@@ -38,7 +68,16 @@ class KoinlyConverter:
             self.logger.addHandler(file_handler)
 
     def load_transactions(self) -> List[Dict[str, Any]]:
-        """Load transactions and deduplicate by hash"""
+        """
+        Loads and deduplicates transactions from the input JSON file.
+        Deduplication is necessary because the same transaction may appear
+        multiple times in the GraphQL response due to multiple messages.
+
+        Returns:
+            List[Dict[str, Any]]: List of unique transactions, indexed by hash
+
+        Note: Preserves the first occurrence of each transaction when duplicates exist
+        """
         with open(self.input_file, 'r') as f:
             transactions = json.load(f)
         
@@ -53,12 +92,29 @@ class KoinlyConverter:
         return list(unique_txs.values())
 
     def parse_timestamp(self, timestamp: str) -> str:
-        """Convert blockchain timestamp to Koinly format"""
+        """
+        Converts blockchain UTC timestamps (Z-suffixed ISO format)
+        to Koinly's expected format: YYYY-MM-DD HH:MM
+        """
         dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
         return dt.strftime('%Y-%m-%d %H:%M')
 
     def get_reward_amount(self, tx_data: Dict) -> float:
-        """Extract reward amount from transaction logs with better null handling"""
+        """
+        Extracts reward amounts from transaction logs.
+        Rewards are found in withdraw_rewards events within transaction logs.
+        Amounts are in ncheq and need to be converted to CHEQ.
+
+        Args:
+            tx_data (Dict): Transaction data containing logs and events
+
+        Returns:
+            float: Total reward amount in CHEQ (not ncheq)
+
+        Debug Note:
+            If debug_hash matches transaction hash, full transaction data
+            is logged to help troubleshoot reward extraction issues
+        """
         if not tx_data:
             return 0.0
             
@@ -101,7 +157,13 @@ class KoinlyConverter:
 
     # Handle redelegation rewards safely
     def get_redelegate_reward_amount(self, tx_data: Dict, msg: Dict) -> float:
-        """Safely extract reward amount from redelegation transaction"""
+        """
+        Redelegation transactions are complex because:
+        1. They automatically trigger reward withdrawal
+        2. The reward amount appears in coin_received events
+        3. Multiple coin_received events may exist
+        4. Need to match receiver address with reward amount
+        """
         if not tx_data or not msg:
             return 0.0
 
@@ -158,7 +220,17 @@ class KoinlyConverter:
 
     # Rewards collected through Authz Exec transactions need to be consolidated since there are often hundreds per day
     def consolidate_authz_records(self, records):
-        """Consolidate authz transactions by day"""
+        """
+        Special handling for Authz transactions is required because:
+        1. Validators often use Authz to claim rewards multiple times per day
+        2. Having hundreds of small reward claims makes tax reporting difficult
+
+        This consolidation:
+        - Groups all Authz reward claims by day
+        - Sums up the rewards and fees
+        - Creates a single daily record with the total amounts
+        - Preserves transaction counts in the description
+        """
         daily_authz = {}
         consolidated_records = []
         
@@ -203,13 +275,37 @@ class KoinlyConverter:
         return consolidated_records
 
     def get_fee(self, tx_data: Dict) -> float:
-        """Extract fee amount from transaction"""
+        """
+        Extracts transaction fee and converts from ncheq to CHEQ.
+        Fees are in the first amount object in the fee array.
+        Returns 0.0 if no fee is found.
+        """
         if tx_data.get('fee', {}).get('amount'):
             return float(tx_data['fee']['amount'][0]['amount']) / self.NCHEQ_TO_CHEQ
         return 0.0
 
     def process_transaction(self, tx: Dict) -> Dict:
-        """Convert a single transaction to Koinly format"""
+        """
+        Core transaction processing logic that:
+        1. Extracts timestamps, fees, and transaction details
+        2. Identifies transaction type from messages
+        3. Processes amounts and addresses based on transaction type
+        4. Handles special cases like:
+        - IBC transfers
+        - Delegation rewards
+        - Redelegations with automatic reward claims
+        - Authz executions
+        5. Returns a Koinly-compatible record with all required fields
+
+        Transaction types handled:
+        - Bank sends (transfers)
+        - Reward withdrawals
+        - Delegations/Undelegations
+        - Redelegations
+        - IBC transfers 
+        - Governance votes
+        - Authz operations
+        """
         tx_data = tx.get('transaction', {})
         if not tx_data:
             self.logger.debug(f"Empty transaction data found")
@@ -265,7 +361,11 @@ class KoinlyConverter:
                 record['Description'] = 'IBC client update'
                 continue
             
-            # Bank Send
+            # Bank send messages represent direct transfers:
+            # - Need to identify if we're sender or receiver
+            # - Always record both addresses for completeness
+            # - Record amount as sent or received based on our role
+            # - Watch for our address being neither sender nor receiver
             if msg_type == '/cosmos.bank.v1beta1.MsgSend':
                 amount = float(msg['amount'][0]['amount']) / self.NCHEQ_TO_CHEQ
                 is_sender = msg['from_address'] == self.address
@@ -306,7 +406,12 @@ class KoinlyConverter:
                 record['Sender'].add(self.address)
                 record['Description'] = f'Voted on proposal {msg["proposal_id"]}'
                 
-            # Staking Delegate
+            # Staking operations have several complexities:
+            # - Delegations only incur fees (no actual token movement)
+            # - Undelegations trigger automatic reward withdrawal
+            # - Redelegations may include rewards from source validator
+            # - All amounts need conversion from ncheq to CHEQ
+            # - Validator addresses should be preserved for tracking
             elif msg_type == '/cosmos.staking.v1beta1.MsgDelegate':
                 amount = float(msg['amount']['amount']) / self.NCHEQ_TO_CHEQ
                 record['Label'].add('cost')
@@ -386,7 +491,10 @@ class KoinlyConverter:
                     record['Label'].add('cost')
                     record['Description'] = 'Redelegation transaction (details unavailable)'
 
-            # IBC Transfer
+            # IBC (Inter-Blockchain Communication) transfers require special handling:
+            # - Need to identify direction (outgoing/incoming) 
+            # - Address formats differ between chains
+            # - Token denomination may change during transfer
             elif msg_type == '/ibc.applications.transfer.v1.MsgTransfer':
                 amount = float(msg['token']['amount']) / self.NCHEQ_TO_CHEQ
                 is_sender = msg['sender'] == self.address
@@ -403,7 +511,11 @@ class KoinlyConverter:
                     record['Recipient'].add(self.address)
                 record['Label'].add('transfer')
 
-            # Authz Exec (need to process wrapped messages)
+            # Authz (Authorization) transactions are complex:
+            # - They wrap other message types
+            # - Need to extract actual operation from wrapped messages
+            # - Rewards are found in coin_received events
+            # - Multiple rewards may be claimed in single transactions
             elif msg_type == '/cosmos.authz.v1beta1.MsgExec':
                 record['Label'].add('authz')
                 
@@ -502,6 +614,24 @@ class KoinlyConverter:
         self.logger.info(f"Output saved to {self.output_file}")
 
 def main():
+    """
+    Main conversion pipeline that:
+    1. Loads transactions from input JSON
+    2. Processes each transaction into Koinly format
+    3. Consolidates Authz reward claims
+    4. Sorts by timestamp
+    5. Writes to CSV in Koinly format
+
+    Skips transactions that:
+    - Contain only IBC client updates
+    - Have no monetary impact (zero amounts/fees)
+    - Failed to process due to unexpected formats
+
+    Error handling:
+    - Continues processing on individual transaction failures
+    - Logs errors with transaction hashes for debugging
+    - Preserves successfully processed transactions
+    """
     parser = argparse.ArgumentParser(description="Convert blockchain transactions to Koinly CSV format")
     parser.add_argument("--input", required=True, help="Input JSON file from GraphQL fetch")
     parser.add_argument("--output", help="Output CSV file name", default="koinly_export.csv")
