@@ -438,31 +438,36 @@ class KoinlyConverter:
             # Staking Undelegate - record both fee and automatic reward withdrawal
             elif msg_type == '/cosmos.staking.v1beta1.MsgUndelegate':
                 stake_amount = float(msg['amount']['amount']) / self.NCHEQ_TO_CHEQ
-                record['Label'].add('reward')
+                record['Label'].add('reward' if tx_data.get('success', False) else 'cost')
                 
-                # Find reward amount from logs
-                logs = tx_data.get('logs', [])
-                for log in logs:
-                    for event in log.get('events', []):
-                        if event.get('type') == 'coin_received':
-                            attributes = event.get('attributes', [])
-                            amount = None
-                            is_receiver = False
-                            
-                            # Check both receiver and amount in the same event
-                            for attr in attributes:
-                                if attr.get('key') == 'receiver' and attr.get('value') == self.address:
-                                    is_receiver = True
-                                if attr.get('key') == 'amount' and attr.get('value', '').endswith('ncheq'):
-                                    amount = float(attr.get('value').rstrip('ncheq'))
-                            
-                            # Only set reward amount if this event was for our address
-                            if is_receiver and amount:
-                                record['Received Amount'] = amount / self.NCHEQ_TO_CHEQ
-                                record['Received Currency'] = 'CHEQ'
+                # Only process rewards if transaction was successful and has logs
+                if tx_data.get('success', False) and tx_data.get('logs'):
+                    # Find reward amount from logs
+                    logs = tx_data.get('logs', [])
+                    for log in logs:
+                        for event in log.get('events', []):
+                            if event.get('type') == 'coin_received':
+                                attributes = event.get('attributes', [])
+                                amount = None
+                                is_receiver = False
+                                
+                                # Check both receiver and amount in the same event
+                                for attr in attributes:
+                                    if attr.get('key') == 'receiver' and attr.get('value') == self.address:
+                                        is_receiver = True
+                                    if attr.get('key') == 'amount' and attr.get('value', '').endswith('ncheq'):
+                                        amount = float(attr.get('value').rstrip('ncheq'))
+                                
+                                # Only set reward amount if this event was for our address
+                                if is_receiver and amount:
+                                    record['Received Amount'] = amount / self.NCHEQ_TO_CHEQ
+                                    record['Received Currency'] = 'CHEQ'
 
                 record['Recipient'].add(self.address)
-                record['Description'] = f'Undelegated {stake_amount} CHEQ from {msg["validator_address"]} and withdrew rewards'
+                status = "failed" if not tx_data.get('success', False) else "succeeded"
+                record['Description'] = f'Undelegated {stake_amount} CHEQ from {msg["validator_address"]} ({status})'
+                if record.get('Received Amount'):
+                    record['Description'] += f' and withdrew {record["Received Amount"]} CHEQ in rewards'
 
             # Staking Redelegate - record both fee and automatic reward withdrawal
             elif msg_type == '/cosmos.staking.v1beta1.MsgBeginRedelegate':
