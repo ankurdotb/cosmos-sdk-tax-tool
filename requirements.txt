@@ -1,0 +1,10 @@
+# HTTP requests for GraphQL API
+requests>=2.31.0
+
+# Argument parsing is built-in (argparse)
+# Datetime handling is built-in (datetime)
+# JSON handling is built-in (json)
+# Pathlib is built-in (pathlib)
+# CSV handling is built-in (csv)
+# Typing is built-in (typing)
+# Logging is built-in (logging)
