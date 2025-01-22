@@ -8,11 +8,11 @@ The go-to tool for exporting transactions from Cosmos SDK chains is [Stake.tax](
 
 However, I had a personal need to build this because:
 
-- For any chains not supported by default ("Cosmos+"), you need to have an archive REST API endpoint that *definitely* covers the period being imported for. As a user, it's very hard to know if this is true.
+- For any chains not supported by default ("Cosmos+"), you need to have an archive REST API endpoint (e.g., `https://archive-api.cheqd.net`) that *definitely* covers the period being imported for. As a user, it's very hard to know if a REST API endpoint is archival or not, and for what period it has archival data.
 - Often, a Stake.tax export will fail because the REST API being used either crashes or gets rate limited and it's hard to recover.
 - If you've ever enabled automatic restaking, your transaction history will be full of reward withdrawal and restake events every hour/few hours/day. When imported into Koinly, this is a massive pain and I wanted to build something that would *summarise* such transactions to a maximum of one per day.
 
-A **pre-requisite** for using this tool is that the target chain must have a **BigDipper blockchain explorer**. This is because BigDipper indexes all transactions and exposes it via a GraphQL API that is far more performant when fetching transactions, as opposed to a Cosmos SDK REST API which might ditch historical details due to default pruning that removes historical states beyond a certain number of days/weeks.
+A **pre-requisite** for using this tool is that the target chain must have a **BigDipper blockchain explorer** (e.g., [cheqd's blockchain explorer](https://explorer.cheqd.io/)). This is because BigDipper indexes all transactions and exposes it via a GraphQL API that is far more performant when fetching transactions, as opposed to a Cosmos SDK REST API which might ditch historical details due to default pruning that removes historical states beyond a certain number of days/weeks.
 
 ## Overview
 
