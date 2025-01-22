@@ -115,7 +115,7 @@ class KoinlyConverter:
             If debug_hash matches transaction hash, full transaction data
             is logged to help troubleshoot reward extraction issues
         """
-        if not tx_data:
+        if not tx_data or not tx_data.get('success', False):
             return 0.0
             
         if self.debug_hash and tx_data.get('hash') == self.debug_hash:
@@ -164,7 +164,7 @@ class KoinlyConverter:
         3. Multiple coin_received events may exist
         4. Need to match receiver address with reward amount
         """
-        if not tx_data or not msg:
+        if not tx_data or not msg or not tx_data.get('success', False):
             return 0.0
 
         try:
@@ -337,7 +337,7 @@ class KoinlyConverter:
             'Received Currency': '',
             'Fee Amount': fee_amount if fee_amount > 0 and has_non_client_updates else '',
             'Fee Currency': 'CHEQ' if fee_amount > 0 and has_non_client_updates else '',
-            'Label': set(),
+            'Label': {'cost'} if not tx_data.get('success', False) else set(),
             'TxHash': tx_data.get('hash', ''),
             'Description': '',
             'Recipient': set(),
@@ -438,50 +438,57 @@ class KoinlyConverter:
             # Staking Undelegate - record both fee and automatic reward withdrawal
             elif msg_type == '/cosmos.staking.v1beta1.MsgUndelegate':
                 stake_amount = float(msg['amount']['amount']) / self.NCHEQ_TO_CHEQ
-                record['Label'].add('reward')
+                record['Label'].add('reward' if tx_data.get('success', False) else 'cost')
                 
-                # Find reward amount from logs
-                logs = tx_data.get('logs', [])
-                for log in logs:
-                    for event in log.get('events', []):
-                        if event.get('type') == 'coin_received':
-                            attributes = event.get('attributes', [])
-                            amount = None
-                            is_receiver = False
-                            
-                            # Check both receiver and amount in the same event
-                            for attr in attributes:
-                                if attr.get('key') == 'receiver' and attr.get('value') == self.address:
-                                    is_receiver = True
-                                if attr.get('key') == 'amount' and attr.get('value', '').endswith('ncheq'):
-                                    amount = float(attr.get('value').rstrip('ncheq'))
-                            
-                            # Only set reward amount if this event was for our address
-                            if is_receiver and amount:
-                                record['Received Amount'] = amount / self.NCHEQ_TO_CHEQ
-                                record['Received Currency'] = 'CHEQ'
+                # Only process rewards if transaction was successful and has logs
+                if tx_data.get('success', False) and tx_data.get('logs'):
+                    # Find reward amount from logs
+                    logs = tx_data.get('logs', [])
+                    for log in logs:
+                        for event in log.get('events', []):
+                            if event.get('type') == 'coin_received':
+                                attributes = event.get('attributes', [])
+                                amount = None
+                                is_receiver = False
+                                
+                                # Check both receiver and amount in the same event
+                                for attr in attributes:
+                                    if attr.get('key') == 'receiver' and attr.get('value') == self.address:
+                                        is_receiver = True
+                                    if attr.get('key') == 'amount' and attr.get('value', '').endswith('ncheq'):
+                                        amount = float(attr.get('value').rstrip('ncheq'))
+                                
+                                # Only set reward amount if this event was for our address
+                                if is_receiver and amount:
+                                    record['Received Amount'] = amount / self.NCHEQ_TO_CHEQ
+                                    record['Received Currency'] = 'CHEQ'
 
                 record['Recipient'].add(self.address)
-                record['Description'] = f'Undelegated {stake_amount} CHEQ from {msg["validator_address"]} and withdrew rewards'
+                status = "failed" if not tx_data.get('success', False) else "succeeded"
+                record['Description'] = f'Undelegated {stake_amount} CHEQ from {msg["validator_address"]} ({status})'
+                if record.get('Received Amount'):
+                    record['Description'] += f' and withdrew {record["Received Amount"]} CHEQ in rewards'
 
             # Staking Redelegate - record both fee and automatic reward withdrawal
             elif msg_type == '/cosmos.staking.v1beta1.MsgBeginRedelegate':
                 try:
                     stake_amount = float(msg.get('amount', {}).get('amount', 0)) / self.NCHEQ_TO_CHEQ
-                    record['Label'].add('reward')
-                    
-                    # Get reward amount using the new safe method
-                    reward_amount = self.get_redelegate_reward_amount(tx_data, msg)
-                    if reward_amount > 0:
-                        record['Received Amount'] = reward_amount
-                        record['Received Currency'] = 'CHEQ'
+                    record['Label'].add('reward' if tx_data.get('success', False) else 'cost')
+        
+                    # Get reward amount only if transaction succeeded
+                    if tx_data.get('success', False):
+                        reward_amount = self.get_redelegate_reward_amount(tx_data, msg)
+                        if reward_amount > 0:
+                            record['Received Amount'] = reward_amount
+                            record['Received Currency'] = 'CHEQ'
                     
                     record['Recipient'].add(self.address)
                     
                     # Safe access to validator addresses
                     val_src = msg.get('validator_src_address', 'unknown_validator')
                     val_dst = msg.get('validator_dst_address', 'unknown_validator')
-                    record['Description'] = f'Redelegated {stake_amount} CHEQ from {val_src} to {val_dst}'
+                    status = "failed" if not tx_data.get('success', False) else "succeeded"
+                    record['Description'] = f'Redelegated {stake_amount} CHEQ from {val_src} to {val_dst} ({status})'
                     if reward_amount > 0:
                         record['Description'] += f' and withdrew {reward_amount} CHEQ in rewards'
                 
@@ -519,30 +526,32 @@ class KoinlyConverter:
             elif msg_type == '/cosmos.authz.v1beta1.MsgExec':
                 record['Label'].add('authz')
                 
-                # Check for any rewards in the coin_received events
-                logs = tx_data.get('logs', [])
-                for log in logs:
-                    for event in log.get('events', []):
-                        if event.get('type') == 'coin_received':
-                            attributes = event.get('attributes', [])
-                            amount = None
-                            is_receiver = False
-                            
-                            # Check both receiver and amount in the same event group
-                            for attr in attributes:
-                                if attr.get('key') == 'receiver' and attr.get('value') == self.address:
-                                    is_receiver = True
-                                if attr.get('key') == 'amount' and attr.get('value', '').endswith('ncheq'):
-                                    try:
-                                        amount = float(attr.get('value').rstrip('ncheq'))
-                                    except (ValueError, TypeError):
-                                        continue
-                                        
-                            # Only set reward amount if this event was for our address
-                            if is_receiver and amount and not record['Received Amount']:
-                                record['Received Amount'] = amount / self.NCHEQ_TO_CHEQ
-                                record['Received Currency'] = 'CHEQ'
-                                record['Label'].add('reward')
+                # Check for any rewards in the coin_received events only if transaction succeeded
+                if tx_data.get('success', False):
+                    logs = tx_data.get('logs', [])
+                    if logs:  # Only process if logs exist
+                        for log in logs:
+                            for event in log.get('events', []):
+                                if event.get('type') == 'coin_received':
+                                    attributes = event.get('attributes', [])
+                                    amount = None
+                                    is_receiver = False
+                                    
+                                    # Check both receiver and amount in the same event group
+                                    for attr in attributes:
+                                        if attr.get('key') == 'receiver' and attr.get('value') == self.address:
+                                            is_receiver = True
+                                        if attr.get('key') == 'amount' and attr.get('value', '').endswith('ncheq'):
+                                            try:
+                                                amount = float(attr.get('value').rstrip('ncheq'))
+                                            except (ValueError, TypeError):
+                                                continue
+                                                
+                                    # Only set reward amount if this event was for our address
+                                    if is_receiver and amount and not record['Received Amount']:
+                                        record['Received Amount'] = amount / self.NCHEQ_TO_CHEQ
+                                        record['Received Currency'] = 'CHEQ'
+                                        record['Label'].add('reward')
 
             # Authz Grant
             elif msg_type == '/cosmos.authz.v1beta1.MsgGrant':
