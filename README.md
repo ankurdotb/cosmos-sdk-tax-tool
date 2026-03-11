@@ -64,7 +64,8 @@ After fetching transactions, convert them to Koinly format:
 python tx_to_koinly.py \
     --input "transactions_20240122_123456.json" \
     --output "koinly_export.csv" \
-    --address "YOUR_WALLET_ADDRESS"
+    --address "YOUR_WALLET_ADDRESS" \
+    --archive-rest-api-url "YOUR_ARCHIVE_REST_API_URL"
 ```
 
 #### Options
@@ -72,6 +73,7 @@ python tx_to_koinly.py \
 - `--input`: Input JSON file from previous step (required)
 - `--output`: Output CSV filename (default: koinly_export.csv)
 - `--address`: Your wallet address (required)
+- `--archive-rest-api-url`: Base archive REST API URL used for fallback transaction lookups, e.g. `https://archive-api.cheqd.net`
 - `--debug`: Enable debug logging
 - `--hash`: Transaction hash to debug specific transactions
 
@@ -99,13 +101,37 @@ The converter handles various transaction types:
 - IBC transfers
 - Governance votes
 - Authz operations
+- cheqd DID/resource writes
 
 #### Key features
 
 - Deduplicates transactions
 - Consolidates multiple Authz reward claims per day
 - Converts amounts from blockchain denomination (ncheq) to standard units (CHEQ)
+- For cheqd identity/resource writes, prioritises fee extraction from `coin_received` event logs instead of `fee.amount.amount`
+- Falls back to the archive REST API when local transaction logs are missing `coin_received`, `coin_spent`, or `transfer` events for those cheqd identity/resource writes
 - Detailed logging for debugging
+
+### Special handling for cheqd identity/resource writes
+
+For the following message types, the converter does **not** rely on `fee.amount.amount` and instead derives the fee from event logs:
+
+- `/cheqd.resource.v2.MsgCreateResource`
+- `/cheqd.did.v2.MsgCreateDidDoc`
+- `/cheqd.did.v2.MsgUpdateDidDoc`
+- `/cheqd.did.v2.MsgDeactivateDidDoc`
+
+The fee is extracted from `logs.*.events.*.attributes` where:
+
+- `type == coin_received`
+- `receiver == cheqd1neus3an933cxp7ewuxw6jcuf6j8ka777h32p64`
+- `amount` is used as the fee value
+
+If a fetched transaction does not include the required `coin_received`, `coin_spent`, and `transfer` events locally, the converter performs a fallback lookup against:
+
+- `ARCHIVE_REST_API_URL/cosmos/tx/v1beta1/txs/<tx_hash>`
+
+using the base URL supplied with `--archive-rest-api-url`.
 
 #### Key classes
 

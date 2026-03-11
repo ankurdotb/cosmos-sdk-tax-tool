@@ -13,12 +13,21 @@ import json
 import csv
 from datetime import datetime
 import argparse
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from pathlib import Path
 import logging
+import requests
 
 class KoinlyConverter:
-    def __init__(self, input_file: str, output_file: str, address: str, debug: bool = False, debug_hash: str = None):
+    def __init__(
+        self,
+        input_file: str,
+        output_file: str,
+        address: str,
+        debug: bool = False,
+        debug_hash: str = None,
+        archive_rest_api_url: Optional[str] = None
+    ):
         """
         Converts blockchain transaction data to Koinly-compatible format.
 
@@ -33,6 +42,8 @@ class KoinlyConverter:
         self.output_file = output_file
         self.address = address
         self.debug_hash = debug_hash
+        self.archive_rest_api_url = archive_rest_api_url.rstrip('/') if archive_rest_api_url else None
+        self.archive_tx_cache = {}
 
         """
         NCHEQ_TO_CHEQ: Conversion factor from nano-CHEQ to CHEQ (10^9)
@@ -305,41 +316,97 @@ class KoinlyConverter:
         Extracts a transaction fee from coin_received log events for the
         configured fee receiver address.
         """
-        logs = tx_data.get('logs', [])
-        if not logs:
+        events = self.get_fee_events(tx_data)
+        if not events:
             return 0.0
 
         total_amount = 0.0
-        for log in logs:
-            if not isinstance(log, dict):
+        for event in events:
+            if not isinstance(event, dict) or event.get('type') != 'coin_received':
                 continue
 
-            events = log.get('events', [])
-            for event in events:
-                if not isinstance(event, dict) or event.get('type') != 'coin_received':
+            attributes = event.get('attributes', [])
+            amount = None
+            is_fee_receiver = False
+
+            for attr in attributes:
+                if not isinstance(attr, dict):
                     continue
 
-                attributes = event.get('attributes', [])
-                amount = None
-                is_fee_receiver = False
+                if attr.get('key') == 'receiver' and attr.get('value') == self.EVENT_LOG_FEE_RECEIVER:
+                    is_fee_receiver = True
+                elif attr.get('key') == 'amount' and attr.get('value', '').endswith('ncheq'):
+                    try:
+                        amount = float(attr['value'].rstrip('ncheq'))
+                    except (ValueError, TypeError):
+                        self.logger.debug(f"Invalid event log fee amount in tx {tx_data.get('hash')}")
+                        amount = None
 
-                for attr in attributes:
-                    if not isinstance(attr, dict):
-                        continue
-
-                    if attr.get('key') == 'receiver' and attr.get('value') == self.EVENT_LOG_FEE_RECEIVER:
-                        is_fee_receiver = True
-                    elif attr.get('key') == 'amount' and attr.get('value', '').endswith('ncheq'):
-                        try:
-                            amount = float(attr['value'].rstrip('ncheq'))
-                        except (ValueError, TypeError):
-                            self.logger.debug(f"Invalid event log fee amount in tx {tx_data.get('hash')}")
-                            amount = None
-
-                if is_fee_receiver and amount:
-                    total_amount += amount
+            if is_fee_receiver and amount:
+                total_amount += amount
 
         return total_amount / self.NCHEQ_TO_CHEQ if total_amount > 0 else 0.0
+
+    def get_fee_events(self, tx_data: Dict) -> List[Dict[str, Any]]:
+        """
+        Returns fee-related events from the local transaction logs, or falls back
+        to the archive REST API for special cheqd identity/resource transactions
+        when coin_received, coin_spent, or transfer events are missing.
+        """
+        local_events = self.flatten_log_events(tx_data.get('logs', []))
+        required_event_types = {'coin_received', 'coin_spent', 'transfer'}
+        local_event_types = {
+            event.get('type') for event in local_events if isinstance(event, dict) and event.get('type')
+        }
+
+        if required_event_types.issubset(local_event_types):
+            return local_events
+
+        archive_events = self.get_archive_fee_events(tx_data.get('hash', ''))
+        return archive_events or local_events
+
+    def flatten_log_events(self, logs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Flattens transaction logs into a single list of event objects."""
+        flattened_events = []
+        for log in logs or []:
+            if not isinstance(log, dict):
+                continue
+            events = log.get('events', [])
+            for event in events:
+                if isinstance(event, dict):
+                    flattened_events.append(event)
+        return flattened_events
+
+    def get_archive_fee_events(self, tx_hash: str) -> List[Dict[str, Any]]:
+        """
+        Fetches transaction events from the archive REST API using:
+        ARCHIVE_REST_API_URL//cosmos/tx/v1beta1/txs/<tx_hash>
+        """
+        if not tx_hash or not self.archive_rest_api_url:
+            if not self.archive_rest_api_url:
+                self.logger.debug("Archive REST API URL not configured; skipping archive lookup")
+            return []
+
+        if tx_hash in self.archive_tx_cache:
+            return self.archive_tx_cache[tx_hash]
+
+        url = f"{self.archive_rest_api_url}//cosmos/tx/v1beta1/txs/{tx_hash}"
+
+        try:
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+            events = data.get('tx_response', {}).get('events', [])
+            filtered_events = [
+                event for event in events
+                if isinstance(event, dict) and event.get('type') in {'coin_received', 'coin_spent', 'transfer'}
+            ]
+            self.archive_tx_cache[tx_hash] = filtered_events
+            return filtered_events
+        except Exception as e:
+            self.logger.warning(f"Failed to fetch archive tx {tx_hash}: {str(e)}")
+            self.archive_tx_cache[tx_hash] = []
+            return []
 
     def process_transaction(self, tx: Dict) -> Dict:
         """
@@ -702,12 +769,23 @@ def main():
     parser.add_argument("--input", required=True, help="Input JSON file from GraphQL fetch")
     parser.add_argument("--output", help="Output CSV file name", default="koinly_export.csv")
     parser.add_argument("--address", required=True, help="Your wallet address")
+    parser.add_argument(
+        "--archive-rest-api-url",
+        help="Base archive REST API URL used for fallback tx lookups"
+    )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging to file")
     parser.add_argument("--hash", help="Transaction hash to debug")
     
     args = parser.parse_args()
     
-    converter = KoinlyConverter(args.input, args.output, args.address, args.debug, args.hash)
+    converter = KoinlyConverter(
+        args.input,
+        args.output,
+        args.address,
+        args.debug,
+        args.hash,
+        args.archive_rest_api_url
+    )
     converter.convert()
 
 if __name__ == "__main__":
