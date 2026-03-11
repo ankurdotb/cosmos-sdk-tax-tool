@@ -45,6 +45,13 @@ class KoinlyConverter:
             - TxHash: Unique transaction identifier
         """
         self.NCHEQ_TO_CHEQ = 1_000_000_000  # 1 CHEQ = 10^9 ncheq
+        self.EVENT_LOG_FEE_RECEIVER = 'cheqd1neus3an933cxp7ewuxw6jcuf6j8ka777h32p64'
+        self.EVENT_LOG_FEE_MSG_TYPES = {
+            '/cheqd.resource.v2.MsgCreateResource',
+            '/cheqd.did.v2.MsgCreateDidDoc',
+            '/cheqd.did.v2.MsgUpdateDidDoc',
+            '/cheqd.did.v2.MsgDeactivateDidDoc',
+        }
         self.KOINLY_HEADERS = [
             'Date', 'Sent Amount', 'Sent Currency', 'Received Amount', 'Received Currency',
             'Fee Amount', 'Fee Currency', 'Recipient', 'Sender', 'Label', 'TxHash', 'Description'
@@ -277,12 +284,62 @@ class KoinlyConverter:
     def get_fee(self, tx_data: Dict) -> float:
         """
         Extracts transaction fee and converts from ncheq to CHEQ.
-        Fees are in the first amount object in the fee array.
+        For specific cheqd DID/resource messages, the fee is derived from
+        coin_received log events for the configured receiver address.
+        Other transactions use the first amount object in the fee array.
         Returns 0.0 if no fee is found.
         """
+        messages = tx_data.get('messages', [])
+        if any(
+            isinstance(msg, dict) and msg.get('@type') in self.EVENT_LOG_FEE_MSG_TYPES
+            for msg in messages
+        ):
+            return self.get_fee_from_coin_received_logs(tx_data)
+
         if tx_data.get('fee', {}).get('amount'):
             return float(tx_data['fee']['amount'][0]['amount']) / self.NCHEQ_TO_CHEQ
         return 0.0
+
+    def get_fee_from_coin_received_logs(self, tx_data: Dict) -> float:
+        """
+        Extracts a transaction fee from coin_received log events for the
+        configured fee receiver address.
+        """
+        logs = tx_data.get('logs', [])
+        if not logs:
+            return 0.0
+
+        total_amount = 0.0
+        for log in logs:
+            if not isinstance(log, dict):
+                continue
+
+            events = log.get('events', [])
+            for event in events:
+                if not isinstance(event, dict) or event.get('type') != 'coin_received':
+                    continue
+
+                attributes = event.get('attributes', [])
+                amount = None
+                is_fee_receiver = False
+
+                for attr in attributes:
+                    if not isinstance(attr, dict):
+                        continue
+
+                    if attr.get('key') == 'receiver' and attr.get('value') == self.EVENT_LOG_FEE_RECEIVER:
+                        is_fee_receiver = True
+                    elif attr.get('key') == 'amount' and attr.get('value', '').endswith('ncheq'):
+                        try:
+                            amount = float(attr['value'].rstrip('ncheq'))
+                        except (ValueError, TypeError):
+                            self.logger.debug(f"Invalid event log fee amount in tx {tx_data.get('hash')}")
+                            amount = None
+
+                if is_fee_receiver and amount:
+                    total_amount += amount
+
+        return total_amount / self.NCHEQ_TO_CHEQ if total_amount > 0 else 0.0
 
     def process_transaction(self, tx: Dict) -> Dict:
         """

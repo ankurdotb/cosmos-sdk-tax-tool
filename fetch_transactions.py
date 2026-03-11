@@ -15,7 +15,7 @@ class TransactionFetcher:
     blockchain transactions for a specific address.
     """
 
-    def __init__(self, endpoint: str, address: str, batch_size: int = 100, 
+    def __init__(self, endpoint: str, address: str, batch_size: int = 100,
                  max_transactions: int = 5000, output_file: str = None):
         """
         Initialize the TransactionFetcher with the given parameters.
