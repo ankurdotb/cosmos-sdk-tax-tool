@@ -17,6 +17,7 @@ from typing import List, Dict, Any, Optional
 from pathlib import Path
 import logging
 import requests
+import re
 
 class KoinlyConverter:
     def __init__(
@@ -114,8 +115,49 @@ class KoinlyConverter:
         Converts blockchain UTC timestamps (Z-suffixed ISO format)
         to Koinly's expected format: YYYY-MM-DD HH:MM
         """
-        dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+        dt = self.parse_iso_datetime(timestamp)
         return dt.strftime('%Y-%m-%d %H:%M')
+
+    def parse_iso_datetime(self, timestamp: str) -> datetime:
+        """
+        Parses ISO-like datetimes from chain APIs more defensively.
+
+        Handles:
+        - trailing whitespace
+        - `Z` suffixes
+        - fractional seconds with non-standard precision
+        - timestamps with or without timezone offsets
+        """
+        cleaned_timestamp = (timestamp or '').strip()
+        if not cleaned_timestamp:
+            raise ValueError('Empty timestamp')
+
+        normalized_timestamp = cleaned_timestamp.replace('Z', '+00:00')
+
+        # Normalize fractional seconds to at most 6 digits for Python datetime parsing.
+        normalized_timestamp = re.sub(
+            r'\.(\d+)(?=(?:[+-]\d{2}:\d{2})?$)',
+            lambda match: f".{match.group(1)[:6].ljust(6, '0')}",
+            normalized_timestamp
+        )
+
+        try:
+            return datetime.fromisoformat(normalized_timestamp)
+        except ValueError:
+            pass
+
+        for fmt in (
+            '%Y-%m-%dT%H:%M:%S.%f',
+            '%Y-%m-%dT%H:%M:%S',
+            '%Y-%m-%d %H:%M:%S.%f',
+            '%Y-%m-%d %H:%M:%S',
+        ):
+            try:
+                return datetime.strptime(cleaned_timestamp.rstrip('Z'), fmt)
+            except ValueError:
+                continue
+
+        raise ValueError(f'Invalid isoformat string: {timestamp!r}')
 
     def get_reward_amount(self, tx_data: Dict) -> float:
         """
@@ -690,7 +732,7 @@ class KoinlyConverter:
                 auth_type = msg['grant']['authorization'].get('@type', '').split('.')[-1]  # Get the last part of the type
                 expiry = msg['grant'].get('expiration', '')
                 if expiry:
-                    expiry = datetime.fromisoformat(expiry.replace('Z', '+00:00')).strftime('%Y-%m-%d')
+                    expiry = self.parse_iso_datetime(expiry).strftime('%Y-%m-%d')
                     record['Description'] = f'Granted {auth_type} authorization to {msg["grantee"]} until {expiry}'
                 else:
                     record['Description'] = f'Granted {auth_type} authorization to {msg["grantee"]}'
