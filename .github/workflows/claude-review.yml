@@ -2,8 +2,7 @@ name: Claude Auto Review
 
 # Structured code review (read-only).
 # Triggers:
-#   1. Automatic — when a reviewer is requested on PRs targeting main/prerelease
-#   2. Manual    — comment "@claude-review" on any PR
+#   - Automatic — when a reviewer is requested on PRs targeting main
 #
 # For general questions/tasks, use @claude (handled by claude.yml).
 #
@@ -18,28 +17,16 @@ on:
   pull_request:
     branches: [main]
     types: [review_requested]
-  issue_comment:
-    types: [created]
 
 permissions: {}
 
 concurrency:
-  group: claude-review-${{ github.event.issue.number || github.event.pull_request.number || github.ref }}
+  group: claude-review-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   review:
-    if: |
-      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
-      (
-        github.event_name == 'issue_comment' &&
-        github.event.issue.pull_request &&
-        contains(github.event.comment.body, '@claude-review') &&
-        (
-          github.event.comment.author_association == 'MEMBER' ||
-          github.event.comment.author_association == 'OWNER'
-        )
-      )
+    if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -62,7 +49,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: "https://github.com/anthropics/claude-code.git"
           plugins: "code-review@claude-code-plugins"
-          prompt: "/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number || github.event.issue.number }}"
+          prompt: "/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}"
           claude_args: >-
             --system-prompt
             "You are operating in a CI environment.
