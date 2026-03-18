@@ -13,12 +13,7 @@ import json
 import csv
 from datetime import datetime
 import argparse
-<<<<<<< main
-from typing import List, Dict, Any, Optional
-from pathlib import Path
-=======
 from typing import List, Dict, Any
->>>>>>> main
 import logging
 import requests
 import re
@@ -130,13 +125,8 @@ class KoinlyConverter:
         Converts blockchain UTC timestamps (Z-suffixed ISO format)
         to Koinly's expected format: YYYY-MM-DD HH:MM
         """
-<<<<<<< main
         dt = self.parse_iso_datetime(timestamp)
         return dt.strftime('%Y-%m-%d %H:%M')
-=======
-        dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-        return dt.strftime("%Y-%m-%d %H:%M")
->>>>>>> main
 
     def parse_iso_datetime(self, timestamp: str) -> datetime:
         """
@@ -362,7 +352,6 @@ class KoinlyConverter:
         Other transactions use the first amount object in the fee array.
         Returns 0.0 if no fee is found.
         """
-<<<<<<< main
         messages = tx_data.get('messages', [])
         if any(
             isinstance(msg, dict) and msg.get('@type') in self.EVENT_LOG_FEE_MSG_TYPES
@@ -372,10 +361,6 @@ class KoinlyConverter:
 
         if tx_data.get('fee', {}).get('amount'):
             return float(tx_data['fee']['amount'][0]['amount']) / self.NCHEQ_TO_CHEQ
-=======
-        if tx_data.get("fee", {}).get("amount"):
-            return float(tx_data["fee"]["amount"][0]["amount"]) / self.NCHEQ_TO_CHEQ
->>>>>>> main
         return 0.0
 
     def get_fee_from_coin_received_logs(self, tx_data: Dict) -> float:
@@ -758,13 +743,8 @@ class KoinlyConverter:
                 )  # Get the last part of the type
                 expiry = msg["grant"].get("expiration", "")
                 if expiry:
-<<<<<<< main
                     expiry = self.parse_iso_datetime(expiry).strftime('%Y-%m-%d')
                     record['Description'] = f'Granted {auth_type} authorization to {msg["grantee"]} until {expiry}'
-=======
-                    expiry = datetime.fromisoformat(expiry.replace("Z", "+00:00")).strftime("%Y-%m-%d")
-                    record["Description"] = f"Granted {auth_type} authorization to {msg['grantee']} until {expiry}"
->>>>>>> main
                 else:
                     record["Description"] = f"Granted {auth_type} authorization to {msg['grantee']}"
 
@@ -851,7 +831,6 @@ def main():
     parser.add_argument("--hash", help="Transaction hash to debug")
 
     args = parser.parse_args()
-<<<<<<< main
     
     converter = KoinlyConverter(
         args.input,
@@ -861,10 +840,6 @@ def main():
         args.hash,
         args.archive_rest_api_url
     )
-=======
-
-    converter = KoinlyConverter(args.input, args.output, args.address, args.debug, args.hash)
->>>>>>> main
     converter.convert()
 
 
