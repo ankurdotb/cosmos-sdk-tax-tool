@@ -71,7 +71,8 @@ def make_undelegate(delegator, validator, amount_ncheq="50000000000"):
     }
 
 
-def make_undelegate_logs(receiver, reward_ncheq="3000000000"):
+def make_coin_received_logs(receiver, amount_ncheq="3000000000"):
+    """Build logs with a single coin_received event. Used by undelegate, redelegate, and authz tests."""
     return [
         {
             "events": [
@@ -79,12 +80,15 @@ def make_undelegate_logs(receiver, reward_ncheq="3000000000"):
                     "type": "coin_received",
                     "attributes": [
                         {"key": "receiver", "value": receiver},
-                        {"key": "amount", "value": f"{reward_ncheq}ncheq"},
+                        {"key": "amount", "value": f"{amount_ncheq}ncheq"},
                     ],
                 }
             ]
         }
     ]
+
+
+make_undelegate_logs = make_coin_received_logs
 
 
 def make_redelegate(delegator, val_src, val_dst, amount_ncheq="50000000000"):
@@ -97,20 +101,7 @@ def make_redelegate(delegator, val_src, val_dst, amount_ncheq="50000000000"):
     }
 
 
-def make_redelegate_logs(receiver, reward_ncheq="1500000000"):
-    return [
-        {
-            "events": [
-                {
-                    "type": "coin_received",
-                    "attributes": [
-                        {"key": "receiver", "value": receiver},
-                        {"key": "amount", "value": f"{reward_ncheq}ncheq"},
-                    ],
-                }
-            ]
-        }
-    ]
+make_redelegate_logs = make_coin_received_logs
 
 
 def make_ibc_transfer(sender, receiver, amount_ncheq="20000000000"):
@@ -141,20 +132,7 @@ def make_authz_exec(grantee, inner_msgs=None):
     }
 
 
-def make_authz_exec_logs(receiver, amount_ncheq="500000000"):
-    return [
-        {
-            "events": [
-                {
-                    "type": "coin_received",
-                    "attributes": [
-                        {"key": "receiver", "value": receiver},
-                        {"key": "amount", "value": f"{amount_ncheq}ncheq"},
-                    ],
-                }
-            ]
-        }
-    ]
+make_authz_exec_logs = make_coin_received_logs
 
 
 def make_authz_grant(granter, grantee, expiration="2025-12-31T23:59:59Z"):
