@@ -306,7 +306,7 @@ class KoinlyConverter:
 
         for record in records:
             # If it's not an authz reward transaction, keep as is
-            if not (("authz,reward" in record["Label"]) or ("reward,authz" in record["Label"])):
+            if "authz,reward" not in record["Label"]:
                 consolidated_records.append(record)
                 continue
 
@@ -690,6 +690,37 @@ class KoinlyConverter:
                     record["Sender"].add(msg["sender"])
                     record["Recipient"].add(self.address)
                 record["Label"].add("transfer")
+
+            # IBC receive packet — the incoming side of a cross-chain transfer.
+            # The received amount is in the fungible_token_packet log event.
+            elif msg_type == "/ibc.core.channel.v1.MsgRecvPacket":
+                if tx_data.get("success", False):
+                    found = False
+                    logs = tx_data.get("logs") or []
+                    for log in logs:
+                        if found:
+                            break
+                        if not isinstance(log, dict):
+                            continue
+                        for event in log.get("events", []):
+                            if not isinstance(event, dict) or event.get("type") != "fungible_token_packet":
+                                continue
+                            attrs = {
+                                a.get("key"): a.get("value") for a in event.get("attributes", []) if isinstance(a, dict)
+                            }
+                            if attrs.get("receiver") == self.address and attrs.get("success") == "true":
+                                try:
+                                    amount = float(attrs.get("amount", "0")) / self.NCHEQ_TO_CHEQ
+                                    if amount > 0:
+                                        record["Received Amount"] = amount
+                                        record["Received Currency"] = "CHEQ"
+                                        record["Sender"].add(attrs.get("sender", ""))
+                                        record["Recipient"].add(self.address)
+                                        record["Label"].add("transfer")
+                                        found = True
+                                        break
+                                except (ValueError, TypeError):
+                                    self.logger.debug(f"Invalid IBC recv amount in tx {tx_data.get('hash')}")
 
             # Authz (Authorization) transactions are complex:
             # - They wrap other message types
