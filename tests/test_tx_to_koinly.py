@@ -22,6 +22,9 @@ from tests.helpers import (
     make_authz_grant,
     make_authz_revoke,
     make_ibc_client_update,
+    make_ibc_acknowledgement,
+    make_ibc_recv_packet,
+    make_ibc_recv_packet_logs,
 )
 
 
@@ -316,13 +319,59 @@ class TestIBCTransfer:
         assert "transfer" in record["Label"]
         assert WALLET in record["Sender"]
 
-    def test_incoming_ibc(self, converter):
+    def test_incoming_ibc_via_msg_transfer(self, converter):
         tx = make_tx([make_ibc_transfer("cosmos1sender", WALLET, "20000000000")])
         record = converter.process_transaction(tx)
         assert record["Received Amount"] == 20.0
         assert record["Received Currency"] == "CHEQ"
         assert "transfer" in record["Label"]
         assert WALLET in record["Recipient"]
+
+    def test_incoming_ibc_via_recv_packet(self, converter):
+        """MsgRecvPacket is the receive side of IBC — amount comes from fungible_token_packet event."""
+        logs = make_ibc_recv_packet_logs("osmo1sender", WALLET, "100000000000")
+        tx = make_tx(
+            [make_ibc_client_update(), make_ibc_recv_packet(WALLET)],
+            logs=logs,
+        )
+        record = converter.process_transaction(tx)
+        assert record["Received Amount"] == 100.0
+        assert record["Received Currency"] == "CHEQ"
+        assert "transfer" in record["Label"]
+        assert WALLET in record["Recipient"]
+        assert "osmo1sender" in record["Sender"]
+
+    def test_incoming_ibc_recv_packet_failed(self, converter):
+        """Failed MsgRecvPacket should not record received amount."""
+        logs = make_ibc_recv_packet_logs("osmo1sender", WALLET, "100000000000")
+        tx = make_tx(
+            [make_ibc_client_update(), make_ibc_recv_packet(WALLET)],
+            logs=logs,
+            success=False,
+        )
+        record = converter.process_transaction(tx)
+        assert "cost" in record["Label"]
+        assert record["Received Amount"] == ""
+
+    def test_incoming_ibc_recv_packet_unsuccessful_event(self, converter):
+        """fungible_token_packet with success=false should not record amount."""
+        logs = make_ibc_recv_packet_logs("osmo1sender", WALLET, "100000000000", success="false")
+        tx = make_tx(
+            [make_ibc_client_update(), make_ibc_recv_packet(WALLET)],
+            logs=logs,
+        )
+        record = converter.process_transaction(tx)
+        assert record["Received Amount"] == ""
+
+    def test_incoming_ibc_recv_packet_different_receiver(self, converter):
+        """MsgRecvPacket for a different receiver should not record amount for us."""
+        logs = make_ibc_recv_packet_logs("osmo1sender", OTHER_WALLET, "100000000000")
+        tx = make_tx(
+            [make_ibc_client_update(), make_ibc_recv_packet(WALLET)],
+            logs=logs,
+        )
+        record = converter.process_transaction(tx)
+        assert record["Received Amount"] == ""
 
 
 # =============================================================================
@@ -606,6 +655,81 @@ class TestEdgeCases:
             ],
         }
         assert converter.get_reward_amount(tx_data) == 0.0
+
+    def test_none_logs_in_transaction(self, converter):
+        """Real data has 18 txs where logs is null, not an empty list."""
+        tx = make_tx([make_reward_withdrawal(WALLET, VALIDATOR)])
+        tx["transaction"]["logs"] = None
+        record = converter.process_transaction(tx)
+        assert record is not None
+
+    def test_none_logs_reward_amount(self, converter):
+        """get_reward_amount should handle None logs gracefully."""
+        tx_data = {"success": True, "hash": "H1", "logs": None}
+        assert converter.get_reward_amount(tx_data) == 0.0
+
+    def test_multiple_withdraw_rewards_in_single_log(self, converter):
+        """Real data has 11 txs with multiple withdraw_rewards events in one log."""
+        tx_data = {
+            "success": True,
+            "hash": "H1",
+            "logs": [
+                {
+                    "events": [
+                        {
+                            "type": "withdraw_rewards",
+                            "attributes": [
+                                {"key": "amount", "value": "1000000000ncheq"},
+                                {"key": "validator", "value": "val1"},
+                            ],
+                        },
+                        {
+                            "type": "withdraw_rewards",
+                            "attributes": [
+                                {"key": "amount", "value": "2000000000ncheq"},
+                                {"key": "validator", "value": "val2"},
+                            ],
+                        },
+                    ]
+                }
+            ],
+        }
+        assert converter.get_reward_amount(tx_data) == 3.0
+
+    def test_unhandled_ibc_acknowledgement(self, converter):
+        """MsgAcknowledgement (27 txs in real data) falls through all handlers."""
+        tx = make_tx([
+            make_ibc_client_update(),
+            make_ibc_acknowledgement(WALLET),
+        ])
+        record = converter.process_transaction(tx)
+        assert record is not None
+        assert record["Sent Amount"] == ""
+        assert record["Received Amount"] == ""
+
+    def test_ibc_recv_packet_no_logs(self, converter):
+        """MsgRecvPacket without logs produces no received amount."""
+        tx = make_tx([
+            make_ibc_client_update(),
+            make_ibc_recv_packet(WALLET),
+        ])
+        record = converter.process_transaction(tx)
+        assert record is not None
+        assert record["Sent Amount"] == ""
+        assert record["Received Amount"] == ""
+
+    def test_fee_with_payer_granter_fields(self, converter):
+        """Real data has fees with payer/granter fields alongside amount."""
+        tx_data = {
+            "fee": {
+                "amount": [{"amount": "5000000000", "denom": "ncheq"}],
+                "payer": WALLET,
+                "granter": "",
+                "gas_limit": "100000",
+            },
+            "messages": [],
+        }
+        assert converter.get_fee(tx_data) == 5.0
 
 
 # =============================================================================

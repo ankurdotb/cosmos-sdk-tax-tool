@@ -186,3 +186,66 @@ def make_ibc_client_update():
         "client_id": "07-tendermint-0",
         "signer": WALLET,
     }
+
+
+def make_ibc_acknowledgement(signer):
+    return {
+        "@type": "/ibc.core.channel.v1.MsgAcknowledgement",
+        "packet": {},
+        "signer": signer,
+        "proof_height": {"revision_number": "0", "revision_height": "100"},
+        "proof_acked": "proof",
+        "acknowledgement": "ack",
+    }
+
+
+def make_ibc_recv_packet(signer):
+    return {
+        "@type": "/ibc.core.channel.v1.MsgRecvPacket",
+        "packet": {},
+        "signer": signer,
+        "proof_height": {"revision_number": "0", "revision_height": "100"},
+        "proof_commitment": "proof",
+    }
+
+
+def make_ibc_recv_packet_logs(sender, receiver, amount_ncheq="100000000000", success="true"):
+    """Build logs with fungible_token_packet event for incoming IBC transfer."""
+    return [
+        {
+            "events": [
+                {
+                    "type": "recv_packet",
+                    "attributes": [
+                        {"key": "packet_data", "value": "{}"},
+                    ],
+                },
+                {
+                    "type": "coin_received",
+                    "attributes": [
+                        {"key": "receiver", "value": receiver},
+                        {"key": "amount", "value": f"{amount_ncheq}ncheq"},
+                    ],
+                },
+                {
+                    "type": "transfer",
+                    "attributes": [
+                        {"key": "recipient", "value": receiver},
+                        {"key": "amount", "value": f"{amount_ncheq}ncheq"},
+                    ],
+                },
+                {
+                    "type": "fungible_token_packet",
+                    "attributes": [
+                        {"key": "module", "value": "transfer"},
+                        {"key": "sender", "value": sender},
+                        {"key": "receiver", "value": receiver},
+                        {"key": "denom", "value": "transfer/channel-108/ncheq"},
+                        {"key": "amount", "value": amount_ncheq},
+                        {"key": "memo", "value": None},
+                        {"key": "success", "value": success},
+                    ],
+                },
+            ]
+        }
+    ]
