@@ -27,7 +27,7 @@ class KoinlyConverter:
         address: str,
         debug: bool = False,
         debug_hash: str = None,
-        archive_rest_api_url: Optional[str] = None
+        archive_rest_api_url: Optional[str] = None,
     ):
         """
         Converts blockchain transaction data to Koinly-compatible format.
@@ -43,7 +43,7 @@ class KoinlyConverter:
         self.output_file = output_file
         self.address = address
         self.debug_hash = debug_hash
-        self.archive_rest_api_url = archive_rest_api_url.rstrip('/') if archive_rest_api_url else None
+        self.archive_rest_api_url = archive_rest_api_url.rstrip("/") if archive_rest_api_url else None
         self.archive_tx_cache = {}
 
         """
@@ -57,12 +57,12 @@ class KoinlyConverter:
             - TxHash: Unique transaction identifier
         """
         self.NCHEQ_TO_CHEQ = 1_000_000_000  # 1 CHEQ = 10^9 ncheq
-        self.EVENT_LOG_FEE_RECEIVER = 'cheqd1neus3an933cxp7ewuxw6jcuf6j8ka777h32p64'
+        self.EVENT_LOG_FEE_RECEIVER = "cheqd1neus3an933cxp7ewuxw6jcuf6j8ka777h32p64"
         self.EVENT_LOG_FEE_MSG_TYPES = {
-            '/cheqd.resource.v2.MsgCreateResource',
-            '/cheqd.did.v2.MsgCreateDidDoc',
-            '/cheqd.did.v2.MsgUpdateDidDoc',
-            '/cheqd.did.v2.MsgDeactivateDidDoc',
+            "/cheqd.resource.v2.MsgCreateResource",
+            "/cheqd.did.v2.MsgCreateDidDoc",
+            "/cheqd.did.v2.MsgUpdateDidDoc",
+            "/cheqd.did.v2.MsgDeactivateDidDoc",
         }
         self.KOINLY_HEADERS = [
             "Date",
@@ -126,7 +126,7 @@ class KoinlyConverter:
         to Koinly's expected format: YYYY-MM-DD HH:MM
         """
         dt = self.parse_iso_datetime(timestamp)
-        return dt.strftime('%Y-%m-%d %H:%M')
+        return dt.strftime("%Y-%m-%d %H:%M")
 
     def parse_iso_datetime(self, timestamp: str) -> datetime:
         """
@@ -138,17 +138,17 @@ class KoinlyConverter:
         - fractional seconds with non-standard precision
         - timestamps with or without timezone offsets
         """
-        cleaned_timestamp = (timestamp or '').strip()
+        cleaned_timestamp = (timestamp or "").strip()
         if not cleaned_timestamp:
-            raise ValueError('Empty timestamp')
+            raise ValueError("Empty timestamp")
 
-        normalized_timestamp = cleaned_timestamp.replace('Z', '+00:00')
+        normalized_timestamp = cleaned_timestamp.replace("Z", "+00:00")
 
         # Normalize fractional seconds to at most 6 digits for Python datetime parsing.
         normalized_timestamp = re.sub(
-            r'\.(\d+)(?=(?:[+-]\d{2}:\d{2})?$)',
+            r"\.(\d+)(?=(?:[+-]\d{2}:\d{2})?$)",
             lambda match: f".{match.group(1)[:6].ljust(6, '0')}",
-            normalized_timestamp
+            normalized_timestamp,
         )
 
         try:
@@ -157,17 +157,17 @@ class KoinlyConverter:
             pass
 
         for fmt in (
-            '%Y-%m-%dT%H:%M:%S.%f',
-            '%Y-%m-%dT%H:%M:%S',
-            '%Y-%m-%d %H:%M:%S.%f',
-            '%Y-%m-%d %H:%M:%S',
+            "%Y-%m-%dT%H:%M:%S.%f",
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%d %H:%M:%S.%f",
+            "%Y-%m-%d %H:%M:%S",
         ):
             try:
-                return datetime.strptime(cleaned_timestamp.rstrip('Z'), fmt)
+                return datetime.strptime(cleaned_timestamp.rstrip("Z"), fmt)
             except ValueError:
                 continue
 
-        raise ValueError(f'Invalid isoformat string: {timestamp!r}')
+        raise ValueError(f"Invalid isoformat string: {timestamp!r}")
 
     def get_reward_amount(self, tx_data: Dict) -> float:
         """
@@ -352,15 +352,12 @@ class KoinlyConverter:
         Other transactions use the first amount object in the fee array.
         Returns 0.0 if no fee is found.
         """
-        messages = tx_data.get('messages', [])
-        if any(
-            isinstance(msg, dict) and msg.get('@type') in self.EVENT_LOG_FEE_MSG_TYPES
-            for msg in messages
-        ):
+        messages = tx_data.get("messages", [])
+        if any(isinstance(msg, dict) and msg.get("@type") in self.EVENT_LOG_FEE_MSG_TYPES for msg in messages):
             return self.get_fee_from_coin_received_logs(tx_data)
 
-        if tx_data.get('fee', {}).get('amount'):
-            return float(tx_data['fee']['amount'][0]['amount']) / self.NCHEQ_TO_CHEQ
+        if tx_data.get("fee", {}).get("amount"):
+            return float(tx_data["fee"]["amount"][0]["amount"]) / self.NCHEQ_TO_CHEQ
         return 0.0
 
     def get_fee_from_coin_received_logs(self, tx_data: Dict) -> float:
@@ -374,10 +371,10 @@ class KoinlyConverter:
 
         total_amount = 0.0
         for event in events:
-            if not isinstance(event, dict) or event.get('type') != 'coin_received':
+            if not isinstance(event, dict) or event.get("type") != "coin_received":
                 continue
 
-            attributes = event.get('attributes', [])
+            attributes = event.get("attributes", [])
             amount = None
             is_fee_receiver = False
 
@@ -385,11 +382,11 @@ class KoinlyConverter:
                 if not isinstance(attr, dict):
                     continue
 
-                if attr.get('key') == 'receiver' and attr.get('value') == self.EVENT_LOG_FEE_RECEIVER:
+                if attr.get("key") == "receiver" and attr.get("value") == self.EVENT_LOG_FEE_RECEIVER:
                     is_fee_receiver = True
-                elif attr.get('key') == 'amount' and attr.get('value', '').endswith('ncheq'):
+                elif attr.get("key") == "amount" and attr.get("value", "").endswith("ncheq"):
                     try:
-                        amount = float(attr['value'].rstrip('ncheq'))
+                        amount = float(attr["value"].rstrip("ncheq"))
                     except (ValueError, TypeError):
                         self.logger.debug(f"Invalid event log fee amount in tx {tx_data.get('hash')}")
                         amount = None
@@ -405,16 +402,16 @@ class KoinlyConverter:
         to the archive REST API for special cheqd identity/resource transactions
         when coin_received, coin_spent, or transfer events are missing.
         """
-        local_events = self.flatten_log_events(tx_data.get('logs', []))
-        required_event_types = {'coin_received', 'coin_spent', 'transfer'}
+        local_events = self.flatten_log_events(tx_data.get("logs", []))
+        required_event_types = {"coin_received", "coin_spent", "transfer"}
         local_event_types = {
-            event.get('type') for event in local_events if isinstance(event, dict) and event.get('type')
+            event.get("type") for event in local_events if isinstance(event, dict) and event.get("type")
         }
 
         if required_event_types.issubset(local_event_types):
             return local_events
 
-        archive_events = self.get_archive_fee_events(tx_data.get('hash', ''))
+        archive_events = self.get_archive_fee_events(tx_data.get("hash", ""))
         return archive_events or local_events
 
     def flatten_log_events(self, logs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -423,7 +420,7 @@ class KoinlyConverter:
         for log in logs or []:
             if not isinstance(log, dict):
                 continue
-            events = log.get('events', [])
+            events = log.get("events", [])
             for event in events:
                 if isinstance(event, dict):
                     flattened_events.append(event)
@@ -448,10 +445,11 @@ class KoinlyConverter:
             response = requests.get(url, timeout=30)
             response.raise_for_status()
             data = response.json()
-            events = data.get('tx_response', {}).get('events', [])
+            events = data.get("tx_response", {}).get("events", [])
             filtered_events = [
-                event for event in events
-                if isinstance(event, dict) and event.get('type') in {'coin_received', 'coin_spent', 'transfer'}
+                event
+                for event in events
+                if isinstance(event, dict) and event.get("type") in {"coin_received", "coin_spent", "transfer"}
             ]
             self.archive_tx_cache[tx_hash] = filtered_events
             return filtered_events
@@ -771,8 +769,8 @@ class KoinlyConverter:
                 )  # Get the last part of the type
                 expiry = msg["grant"].get("expiration", "")
                 if expiry:
-                    expiry = self.parse_iso_datetime(expiry).strftime('%Y-%m-%d')
-                    record['Description'] = f'Granted {auth_type} authorization to {msg["grantee"]} until {expiry}'
+                    expiry = self.parse_iso_datetime(expiry).strftime("%Y-%m-%d")
+                    record["Description"] = f"Granted {auth_type} authorization to {msg['grantee']} until {expiry}"
                 else:
                     record["Description"] = f"Granted {auth_type} authorization to {msg['grantee']}"
 
@@ -851,23 +849,13 @@ def main():
     parser.add_argument("--input", required=True, help="Input JSON file from GraphQL fetch")
     parser.add_argument("--output", help="Output CSV file name", default="koinly_export.csv")
     parser.add_argument("--address", required=True, help="Your wallet address")
-    parser.add_argument(
-        "--archive-rest-api-url",
-        help="Base archive REST API URL used for fallback tx lookups"
-    )
+    parser.add_argument("--archive-rest-api-url", help="Base archive REST API URL used for fallback tx lookups")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging to file")
     parser.add_argument("--hash", help="Transaction hash to debug")
 
     args = parser.parse_args()
-    
-    converter = KoinlyConverter(
-        args.input,
-        args.output,
-        args.address,
-        args.debug,
-        args.hash,
-        args.archive_rest_api_url
-    )
+
+    converter = KoinlyConverter(args.input, args.output, args.address, args.debug, args.hash, args.archive_rest_api_url)
     converter.convert()
 
 
