@@ -703,9 +703,7 @@ class KoinlyConverter:
                             if not isinstance(event, dict) or event.get("type") != "fungible_token_packet":
                                 continue
                             attrs = {
-                                a.get("key"): a.get("value")
-                                for a in event.get("attributes", [])
-                                if isinstance(a, dict)
+                                a.get("key"): a.get("value") for a in event.get("attributes", []) if isinstance(a, dict)
                             }
                             if attrs.get("receiver") == self.address and attrs.get("success") == "true":
                                 try:

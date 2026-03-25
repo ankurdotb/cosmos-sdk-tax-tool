@@ -3,7 +3,9 @@ VALIDATOR = "cheqdvaloper1testvalidator"
 OTHER_WALLET = "cheqd1otherwallet"
 
 
-def make_tx(messages, success=True, fee_ncheq="5000000000", logs=None, tx_hash="HASH123", timestamp="2024-01-15T10:30:00Z"):
+def make_tx(
+    messages, success=True, fee_ncheq="5000000000", logs=None, tx_hash="HASH123", timestamp="2024-01-15T10:30:00Z"
+):
     """Build a transaction wrapper matching the expected JSON shape."""
     return {
         "transaction": {

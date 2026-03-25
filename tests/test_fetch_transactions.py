@@ -128,7 +128,10 @@ class TestFetchAll:
     @patch("fetch_transactions.requests.post")
     def test_respects_max_transactions(self, mock_post, mock_sleep, tmp_path):
         fetcher = TransactionFetcher(
-            "http://x", "addr1", batch_size=10, max_transactions=15,
+            "http://x",
+            "addr1",
+            batch_size=10,
+            max_transactions=15,
             output_file=str(tmp_path / "txs.json"),
         )
         batch1 = make_batch(10, start_height=1000)

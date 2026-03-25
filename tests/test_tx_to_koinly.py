@@ -595,10 +595,12 @@ class TestEdgeCases:
         assert result is None
 
     def test_ibc_client_update_mixed_with_send(self, converter):
-        tx = make_tx([
-            make_ibc_client_update(),
-            make_bank_send(WALLET, OTHER_WALLET, "10000000000"),
-        ])
+        tx = make_tx(
+            [
+                make_ibc_client_update(),
+                make_bank_send(WALLET, OTHER_WALLET, "10000000000"),
+            ]
+        )
         record = converter.process_transaction(tx)
         assert record is not None
         assert record["Sent Amount"] == 10.0
@@ -698,10 +700,12 @@ class TestEdgeCases:
 
     def test_unhandled_ibc_acknowledgement(self, converter):
         """MsgAcknowledgement (27 txs in real data) falls through all handlers."""
-        tx = make_tx([
-            make_ibc_client_update(),
-            make_ibc_acknowledgement(WALLET),
-        ])
+        tx = make_tx(
+            [
+                make_ibc_client_update(),
+                make_ibc_acknowledgement(WALLET),
+            ]
+        )
         record = converter.process_transaction(tx)
         assert record is not None
         assert record["Sent Amount"] == ""
@@ -709,10 +713,12 @@ class TestEdgeCases:
 
     def test_ibc_recv_packet_no_logs(self, converter):
         """MsgRecvPacket without logs produces no received amount."""
-        tx = make_tx([
-            make_ibc_client_update(),
-            make_ibc_recv_packet(WALLET),
-        ])
+        tx = make_tx(
+            [
+                make_ibc_client_update(),
+                make_ibc_recv_packet(WALLET),
+            ]
+        )
         record = converter.process_transaction(tx)
         assert record is not None
         assert record["Sent Amount"] == ""
@@ -817,8 +823,7 @@ class TestArchiveFallback:
         input_file = tmp_path / "txs.json"
         input_file.write_text("[]")
         c = KoinlyConverter(
-            str(input_file), str(tmp_path / "out.csv"), WALLET,
-            archive_rest_api_url="https://archive.example.com/"
+            str(input_file), str(tmp_path / "out.csv"), WALLET, archive_rest_api_url="https://archive.example.com/"
         )
         assert c.archive_rest_api_url == "https://archive.example.com"
 
