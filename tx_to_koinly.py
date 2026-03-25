@@ -15,10 +15,20 @@ from datetime import datetime
 import argparse
 from typing import List, Dict, Any
 import logging
+import requests
+import re
 
 
 class KoinlyConverter:
-    def __init__(self, input_file: str, output_file: str, address: str, debug: bool = False, debug_hash: str = None):
+    def __init__(
+        self,
+        input_file: str,
+        output_file: str,
+        address: str,
+        debug: bool = False,
+        debug_hash: str = None,
+        archive_rest_api_url: Optional[str] = None
+    ):
         """
         Converts blockchain transaction data to Koinly-compatible format.
 
@@ -33,6 +43,8 @@ class KoinlyConverter:
         self.output_file = output_file
         self.address = address
         self.debug_hash = debug_hash
+        self.archive_rest_api_url = archive_rest_api_url.rstrip('/') if archive_rest_api_url else None
+        self.archive_tx_cache = {}
 
         """
         NCHEQ_TO_CHEQ: Conversion factor from nano-CHEQ to CHEQ (10^9)
@@ -45,6 +57,13 @@ class KoinlyConverter:
             - TxHash: Unique transaction identifier
         """
         self.NCHEQ_TO_CHEQ = 1_000_000_000  # 1 CHEQ = 10^9 ncheq
+        self.EVENT_LOG_FEE_RECEIVER = 'cheqd1neus3an933cxp7ewuxw6jcuf6j8ka777h32p64'
+        self.EVENT_LOG_FEE_MSG_TYPES = {
+            '/cheqd.resource.v2.MsgCreateResource',
+            '/cheqd.did.v2.MsgCreateDidDoc',
+            '/cheqd.did.v2.MsgUpdateDidDoc',
+            '/cheqd.did.v2.MsgDeactivateDidDoc',
+        }
         self.KOINLY_HEADERS = [
             "Date",
             "Sent Amount",
@@ -106,8 +125,49 @@ class KoinlyConverter:
         Converts blockchain UTC timestamps (Z-suffixed ISO format)
         to Koinly's expected format: YYYY-MM-DD HH:MM
         """
-        dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-        return dt.strftime("%Y-%m-%d %H:%M")
+        dt = self.parse_iso_datetime(timestamp)
+        return dt.strftime('%Y-%m-%d %H:%M')
+
+    def parse_iso_datetime(self, timestamp: str) -> datetime:
+        """
+        Parses ISO-like datetimes from chain APIs more defensively.
+
+        Handles:
+        - trailing whitespace
+        - `Z` suffixes
+        - fractional seconds with non-standard precision
+        - timestamps with or without timezone offsets
+        """
+        cleaned_timestamp = (timestamp or '').strip()
+        if not cleaned_timestamp:
+            raise ValueError('Empty timestamp')
+
+        normalized_timestamp = cleaned_timestamp.replace('Z', '+00:00')
+
+        # Normalize fractional seconds to at most 6 digits for Python datetime parsing.
+        normalized_timestamp = re.sub(
+            r'\.(\d+)(?=(?:[+-]\d{2}:\d{2})?$)',
+            lambda match: f".{match.group(1)[:6].ljust(6, '0')}",
+            normalized_timestamp
+        )
+
+        try:
+            return datetime.fromisoformat(normalized_timestamp)
+        except ValueError:
+            pass
+
+        for fmt in (
+            '%Y-%m-%dT%H:%M:%S.%f',
+            '%Y-%m-%dT%H:%M:%S',
+            '%Y-%m-%d %H:%M:%S.%f',
+            '%Y-%m-%d %H:%M:%S',
+        ):
+            try:
+                return datetime.strptime(cleaned_timestamp.rstrip('Z'), fmt)
+            except ValueError:
+                continue
+
+        raise ValueError(f'Invalid isoformat string: {timestamp!r}')
 
     def get_reward_amount(self, tx_data: Dict) -> float:
         """
@@ -287,12 +347,118 @@ class KoinlyConverter:
     def get_fee(self, tx_data: Dict) -> float:
         """
         Extracts transaction fee and converts from ncheq to CHEQ.
-        Fees are in the first amount object in the fee array.
+        For specific cheqd DID/resource messages, the fee is derived from
+        coin_received log events for the configured receiver address.
+        Other transactions use the first amount object in the fee array.
         Returns 0.0 if no fee is found.
         """
-        if tx_data.get("fee", {}).get("amount"):
-            return float(tx_data["fee"]["amount"][0]["amount"]) / self.NCHEQ_TO_CHEQ
+        messages = tx_data.get('messages', [])
+        if any(
+            isinstance(msg, dict) and msg.get('@type') in self.EVENT_LOG_FEE_MSG_TYPES
+            for msg in messages
+        ):
+            return self.get_fee_from_coin_received_logs(tx_data)
+
+        if tx_data.get('fee', {}).get('amount'):
+            return float(tx_data['fee']['amount'][0]['amount']) / self.NCHEQ_TO_CHEQ
         return 0.0
+
+    def get_fee_from_coin_received_logs(self, tx_data: Dict) -> float:
+        """
+        Extracts a transaction fee from coin_received log events for the
+        configured fee receiver address.
+        """
+        events = self.get_fee_events(tx_data)
+        if not events:
+            return 0.0
+
+        total_amount = 0.0
+        for event in events:
+            if not isinstance(event, dict) or event.get('type') != 'coin_received':
+                continue
+
+            attributes = event.get('attributes', [])
+            amount = None
+            is_fee_receiver = False
+
+            for attr in attributes:
+                if not isinstance(attr, dict):
+                    continue
+
+                if attr.get('key') == 'receiver' and attr.get('value') == self.EVENT_LOG_FEE_RECEIVER:
+                    is_fee_receiver = True
+                elif attr.get('key') == 'amount' and attr.get('value', '').endswith('ncheq'):
+                    try:
+                        amount = float(attr['value'].rstrip('ncheq'))
+                    except (ValueError, TypeError):
+                        self.logger.debug(f"Invalid event log fee amount in tx {tx_data.get('hash')}")
+                        amount = None
+
+            if is_fee_receiver and amount:
+                total_amount += amount
+
+        return total_amount / self.NCHEQ_TO_CHEQ if total_amount > 0 else 0.0
+
+    def get_fee_events(self, tx_data: Dict) -> List[Dict[str, Any]]:
+        """
+        Returns fee-related events from the local transaction logs, or falls back
+        to the archive REST API for special cheqd identity/resource transactions
+        when coin_received, coin_spent, or transfer events are missing.
+        """
+        local_events = self.flatten_log_events(tx_data.get('logs', []))
+        required_event_types = {'coin_received', 'coin_spent', 'transfer'}
+        local_event_types = {
+            event.get('type') for event in local_events if isinstance(event, dict) and event.get('type')
+        }
+
+        if required_event_types.issubset(local_event_types):
+            return local_events
+
+        archive_events = self.get_archive_fee_events(tx_data.get('hash', ''))
+        return archive_events or local_events
+
+    def flatten_log_events(self, logs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Flattens transaction logs into a single list of event objects."""
+        flattened_events = []
+        for log in logs or []:
+            if not isinstance(log, dict):
+                continue
+            events = log.get('events', [])
+            for event in events:
+                if isinstance(event, dict):
+                    flattened_events.append(event)
+        return flattened_events
+
+    def get_archive_fee_events(self, tx_hash: str) -> List[Dict[str, Any]]:
+        """
+        Fetches transaction events from the archive REST API using:
+        ARCHIVE_REST_API_URL//cosmos/tx/v1beta1/txs/<tx_hash>
+        """
+        if not tx_hash or not self.archive_rest_api_url:
+            if not self.archive_rest_api_url:
+                self.logger.debug("Archive REST API URL not configured; skipping archive lookup")
+            return []
+
+        if tx_hash in self.archive_tx_cache:
+            return self.archive_tx_cache[tx_hash]
+
+        url = f"{self.archive_rest_api_url}//cosmos/tx/v1beta1/txs/{tx_hash}"
+
+        try:
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+            events = data.get('tx_response', {}).get('events', [])
+            filtered_events = [
+                event for event in events
+                if isinstance(event, dict) and event.get('type') in {'coin_received', 'coin_spent', 'transfer'}
+            ]
+            self.archive_tx_cache[tx_hash] = filtered_events
+            return filtered_events
+        except Exception as e:
+            self.logger.warning(f"Failed to fetch archive tx {tx_hash}: {str(e)}")
+            self.archive_tx_cache[tx_hash] = []
+            return []
 
     def process_transaction(self, tx: Dict) -> Dict:
         """
@@ -577,8 +743,8 @@ class KoinlyConverter:
                 )  # Get the last part of the type
                 expiry = msg["grant"].get("expiration", "")
                 if expiry:
-                    expiry = datetime.fromisoformat(expiry.replace("Z", "+00:00")).strftime("%Y-%m-%d")
-                    record["Description"] = f"Granted {auth_type} authorization to {msg['grantee']} until {expiry}"
+                    expiry = self.parse_iso_datetime(expiry).strftime('%Y-%m-%d')
+                    record['Description'] = f'Granted {auth_type} authorization to {msg["grantee"]} until {expiry}'
                 else:
                     record["Description"] = f"Granted {auth_type} authorization to {msg['grantee']}"
 
@@ -657,12 +823,23 @@ def main():
     parser.add_argument("--input", required=True, help="Input JSON file from GraphQL fetch")
     parser.add_argument("--output", help="Output CSV file name", default="koinly_export.csv")
     parser.add_argument("--address", required=True, help="Your wallet address")
+    parser.add_argument(
+        "--archive-rest-api-url",
+        help="Base archive REST API URL used for fallback tx lookups"
+    )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging to file")
     parser.add_argument("--hash", help="Transaction hash to debug")
 
     args = parser.parse_args()
-
-    converter = KoinlyConverter(args.input, args.output, args.address, args.debug, args.hash)
+    
+    converter = KoinlyConverter(
+        args.input,
+        args.output,
+        args.address,
+        args.debug,
+        args.hash,
+        args.archive_rest_api_url
+    )
     converter.convert()
 
 
