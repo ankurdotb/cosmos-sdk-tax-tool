@@ -174,7 +174,7 @@ The Koinly CSV format is defined by `KOINLY_HEADERS` in `KoinlyConverter`. Modif
 
 Enable debug mode for detailed logging:
 ```sh
-python tx_to_koinly.py --debug --hash YOUR_TX_HASH ...
+python tax_tool.py --address YOUR_WALLET_ADDRESS --debug --hash YOUR_TX_HASH
 ```
 
 Debug logs include:
