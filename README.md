@@ -16,14 +16,16 @@ A **pre-requisite** for using this tool is that the target chain must have a **B
 
 ## Overview
 
-The toolkit consists of two main components:
+The entry point is `tax_tool.py`, which fetches transactions and converts them to Koinly CSV in a single command. It defaults to the cheqd GraphQL endpoint but works with any Cosmos SDK chain that has a BigDipper explorer.
 
-1. `fetch_transactions.py`: Fetches transaction history from a BigDipper explorer GraphQL endpoint
-2. `tx_to_koinly.py`: Converts the fetched transactions into Koinly's CSV import format
+Library modules (imported by `tax_tool.py`):
+
+1. `fetch_transactions.py`: `TransactionFetcher` class — fetches transaction history from a BigDipper explorer GraphQL endpoint
+2. `tx_to_koinly.py`: `KoinlyConverter` class — converts the fetched transactions into Koinly's CSV import format
 
 ## Requirements
 
-- Python 3.7+
+- Python 3.13+
 - `requests` library (for GraphQL API calls)
 
 ### Install dependencies
@@ -34,48 +36,57 @@ pip install -r requirements.txt
 
 ## Usage
 
-### 1. Fetch Transactions
+### Quick Start
 
-First, fetch your transaction history:
+Fetch and convert in one step:
 
 ```sh
-python fetch_transactions.py \
-    --endpoint "YOUR_GRAPHQL_ENDPOINT" \
-    --address "YOUR_WALLET_ADDRESS" \
-    --max-transactions 5000 \
-    --batch-size 100
+python tax_tool.py --address "YOUR_WALLET_ADDRESS"
 ```
 
-#### Options
+This uses the cheqd GraphQL endpoint by default and outputs `YOUR_WALLET_ADDRESS.json` and `YOUR_WALLET_ADDRESS.csv`.
 
-- `--endpoint`: GraphQL API endpoint URL (required), e.g., `https://explorer-gql.cheqd.io/v1/graphql` for [cheqd's blockchain explorer](https://explorer.cheqd.io/)
+#### Friendlier filenames with `--alias`
+
+```sh
+python tax_tool.py --address "YOUR_WALLET_ADDRESS" --alias "myvalidator"
+# Outputs: myvalidator.json, myvalidator.csv
+```
+
+#### Other Cosmos SDK chains
+
+```sh
+python tax_tool.py --address "YOUR_WALLET_ADDRESS" --endpoint "YOUR_GRAPHQL_ENDPOINT"
+```
+
+#### Fetch only or convert only
+
+```sh
+# Fetch only (skip conversion)
+python tax_tool.py --address "YOUR_WALLET_ADDRESS" --fetch-only
+
+# Convert only (skip fetching, requires --input)
+python tax_tool.py --address "YOUR_WALLET_ADDRESS" --convert-only --input "transactions.json"
+```
+
+#### All options
+
+> **Note:** Quote argument values that contain spaces or special characters, e.g. `--alias "my validator"`.
+
 - `--address`: Your wallet address (required)
+- `--endpoint`: GraphQL API endpoint URL (default: `https://explorer-gql.cheqd.io/v1/graphql`)
 - `--batch-size`: Number of transactions per request (default: 100)
 - `--max-transactions`: Maximum transactions to fetch (default: 5000)
-- `--output`: Custom output filename (default: transactions_YYYYMMDD_HHMMSS.json)
-
-The script includes automatic retry logic and progress saving in case of interruptions.
-
-### 2. Convert to Koinly Format
-
-After fetching transactions, convert them to Koinly format:
-
-```sh
-python tx_to_koinly.py \
-    --input "transactions_20240122_123456.json" \
-    --output "koinly_export.csv" \
-    --address "YOUR_WALLET_ADDRESS" \
-    --archive-rest-api-url "YOUR_ARCHIVE_REST_API_URL"
-```
-
-#### Options
-
-- `--input`: Input JSON file from previous step (required)
-- `--output`: Output CSV filename (default: koinly_export.csv)
-- `--address`: Your wallet address (required)
-- `--archive-rest-api-url`: Base archive REST API URL used for fallback transaction lookups, e.g. `https://archive-api.cheqd.net`
+- `--alias`: Friendly name for output files (default: uses address)
+- `--output-json`: Override JSON output filename
+- `--output-csv`: Override CSV output filename
+- `--input`: Input JSON file (required for `--convert-only`)
+- `--archive-rest-api-url`: Base archive REST API URL for fallback transaction lookups, e.g. `https://archive-api.cheqd.net`
 - `--debug`: Enable debug logging
 - `--hash`: Transaction hash to debug specific transactions
+- `--fetch-only`: Only fetch transactions (skip conversion)
+- `--convert-only`: Only convert (skip fetching, requires `--input`)
+
 
 ## Understanding the Code
 
@@ -165,7 +176,7 @@ The Koinly CSV format is defined by `KOINLY_HEADERS` in `KoinlyConverter`. Modif
 
 Enable debug mode for detailed logging:
 ```sh
-python tx_to_koinly.py --debug --hash YOUR_TX_HASH ...
+python tax_tool.py --address "YOUR_WALLET_ADDRESS" --debug --hash "YOUR_TX_HASH"
 ```
 
 Debug logs include:

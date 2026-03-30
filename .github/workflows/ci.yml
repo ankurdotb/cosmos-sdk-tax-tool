@@ -24,8 +24,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install ruff
+          pip install -r requirements-dev.txt
 
       - name: Ruff lint
         run: ruff check .
@@ -34,7 +33,7 @@ jobs:
         run: ruff format --check .
 
       - name: Syntax check
-        run: python -m py_compile fetch_transactions.py && python -m py_compile tx_to_koinly.py
+        run: python -m py_compile tax_tool.py
 
   test:
     runs-on: ubuntu-latest
@@ -50,8 +49,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest
+          pip install -r requirements-dev.txt
 
       - name: Run tests
         run: python -m pytest tests/ -v

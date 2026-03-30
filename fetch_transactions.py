@@ -1,11 +1,8 @@
-#!/usr/bin/env python3
-
 import requests
 import json
 import time
 from pathlib import Path
 from datetime import datetime
-import argparse
 
 
 class TransactionFetcher:
@@ -194,33 +191,3 @@ class TransactionFetcher:
             return False
 
         return True
-
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="Fetch blockchain transactions from BigDipper GraphQL API",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser.add_argument("--endpoint", required=True, help="GraphQL endpoint URL")
-    parser.add_argument("--address", required=True, help="Address to fetch transactions for")
-    parser.add_argument("--batch-size", type=int, default=100, help="Number of transactions per request")
-    parser.add_argument("--max-transactions", type=int, default=5000, help="Maximum number of transactions to fetch")
-    parser.add_argument(
-        "--output", type=str, default=None, help="Output file path (default: transactions_YYYYMMDD_HHMMSS.json)"
-    )
-
-    args = parser.parse_args()
-
-    fetcher = TransactionFetcher(
-        endpoint=args.endpoint,
-        address=args.address,
-        batch_size=args.batch_size,
-        max_transactions=args.max_transactions,
-        output_file=args.output,
-    )
-
-    fetcher.fetch_all()
-
-
-if __name__ == "__main__":
-    main()
