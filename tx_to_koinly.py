@@ -6,13 +6,12 @@ It processes various transaction types including rewards, delegations, transfers
 The output follows Koinly's import format for easier tax reporting and portfolio tracking.
 
 Usage:
-    python tx_to_koinly.py --input transactions.json --output koinly_export.csv --address your_wallet_address
+    python tax_tool.py --address your_wallet_address --convert-only --input transactions.json
 """
 
 import json
 import csv
 from datetime import datetime
-import argparse
 from typing import List, Dict, Any, Optional
 import logging
 import requests
@@ -827,40 +826,3 @@ class KoinlyConverter:
 
         self.logger.info(f"Processed {len(koinly_records)} records")
         self.logger.info(f"Output saved to {self.output_file}")
-
-
-def main():
-    """
-    Main conversion pipeline that:
-    1. Loads transactions from input JSON
-    2. Processes each transaction into Koinly format
-    3. Consolidates Authz reward claims
-    4. Sorts by timestamp
-    5. Writes to CSV in Koinly format
-
-    Skips transactions that:
-    - Contain only IBC client updates
-    - Have no monetary impact (zero amounts/fees)
-    - Failed to process due to unexpected formats
-
-    Error handling:
-    - Continues processing on individual transaction failures
-    - Logs errors with transaction hashes for debugging
-    - Preserves successfully processed transactions
-    """
-    parser = argparse.ArgumentParser(description="Convert blockchain transactions to Koinly CSV format")
-    parser.add_argument("--input", required=True, help="Input JSON file from GraphQL fetch")
-    parser.add_argument("--output", help="Output CSV file name", default="koinly_export.csv")
-    parser.add_argument("--address", required=True, help="Your wallet address")
-    parser.add_argument("--archive-rest-api-url", help="Base archive REST API URL used for fallback tx lookups")
-    parser.add_argument("--debug", action="store_true", help="Enable debug logging to file")
-    parser.add_argument("--hash", help="Transaction hash to debug")
-
-    args = parser.parse_args()
-
-    converter = KoinlyConverter(args.input, args.output, args.address, args.debug, args.hash, args.archive_rest_api_url)
-    converter.convert()
-
-
-if __name__ == "__main__":
-    main()

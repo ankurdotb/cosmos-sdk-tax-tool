@@ -34,7 +34,7 @@ jobs:
         run: ruff format --check .
 
       - name: Syntax check
-        run: python -m py_compile fetch_transactions.py && python -m py_compile tx_to_koinly.py
+        run: python -m py_compile tax_tool.py
 
   test:
     runs-on: ubuntu-latest
