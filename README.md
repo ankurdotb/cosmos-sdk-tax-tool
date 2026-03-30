@@ -71,6 +71,8 @@ python tax_tool.py --address "YOUR_WALLET_ADDRESS" --convert-only --input "trans
 
 #### All options
 
+> **Note:** Quote argument values that contain spaces or special characters, e.g. `--alias "my validator"`.
+
 - `--address`: Your wallet address (required)
 - `--endpoint`: GraphQL API endpoint URL (default: `https://explorer-gql.cheqd.io/v1/graphql`)
 - `--batch-size`: Number of transactions per request (default: 100)
@@ -174,7 +176,7 @@ The Koinly CSV format is defined by `KOINLY_HEADERS` in `KoinlyConverter`. Modif
 
 Enable debug mode for detailed logging:
 ```sh
-python tax_tool.py --address YOUR_WALLET_ADDRESS --debug --hash YOUR_TX_HASH
+python tax_tool.py --address "YOUR_WALLET_ADDRESS" --debug --hash "YOUR_TX_HASH"
 ```
 
 Debug logs include:
