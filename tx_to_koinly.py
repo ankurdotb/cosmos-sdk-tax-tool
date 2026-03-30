@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 """
 This script converts blockchain transaction data from JSON format to Koinly-compatible CSV.
 It processes various transaction types including rewards, delegations, transfers, and IBC transactions.
