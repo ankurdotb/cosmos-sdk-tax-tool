@@ -19,20 +19,15 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--fetch-only", action="store_true", help="Only fetch transactions (skip conversion)")
     mode.add_argument("--convert-only", action="store_true", help="Only convert (skip fetching, requires --input)")
 
-    # Fetch options
     parser.add_argument("--endpoint", default=DEFAULT_ENDPOINT, help="BigDipper GraphQL endpoint URL")
     parser.add_argument("--batch-size", type=int, default=100, help="Number of transactions per request")
     parser.add_argument("--max-transactions", type=int, default=5000, help="Maximum number of transactions to fetch")
-
-    # Convert options
     parser.add_argument("--input", default=None, help="Input JSON file (required for --convert-only)")
     parser.add_argument(
         "--archive-rest-api-url", default=None, help="Base archive REST API URL for fallback tx lookups"
     )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging to file")
     parser.add_argument("--hash", default=None, help="Transaction hash to debug")
-
-    # Output naming
     parser.add_argument("--alias", default=None, help="Friendly name for output files (default: uses address)")
     parser.add_argument("--output-json", default=None, help="Override JSON output filename")
     parser.add_argument("--output-csv", default=None, help="Override CSV output filename")
@@ -41,9 +36,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def resolve_filenames(args) -> tuple[str, str]:
-    base = args.alias if args.alias else args.address
-    json_path = args.output_json if args.output_json else f"{base}.json"
-    csv_path = args.output_csv if args.output_csv else f"{base}.csv"
+    base = args.alias or args.address
+    json_path = args.output_json or f"{base}.json"
+    csv_path = args.output_csv or f"{base}.csv"
     return json_path, csv_path
 
 
@@ -70,7 +65,14 @@ def run(args) -> None:
             sys.exit(1)
 
     if not args.fetch_only:
-        converter = KoinlyConverter(json_path, csv_path, args.address, args.debug, args.hash, args.archive_rest_api_url)
+        converter = KoinlyConverter(
+            input_file=json_path,
+            output_file=csv_path,
+            address=args.address,
+            debug=args.debug,
+            debug_hash=args.hash,
+            archive_rest_api_url=args.archive_rest_api_url,
+        )
         converter.convert()
 
 

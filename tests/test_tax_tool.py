@@ -2,6 +2,9 @@ import pytest
 from argparse import Namespace
 from unittest.mock import patch
 
+from tests.helpers import WALLET
+from tax_tool import DEFAULT_ENDPOINT
+
 
 class TestBuildParser:
     def test_address_is_required(self):
@@ -13,9 +16,9 @@ class TestBuildParser:
     def test_address_only_uses_defaults(self):
         from tax_tool import build_parser
 
-        args = build_parser().parse_args(["--address", "cheqd1abc"])
-        assert args.address == "cheqd1abc"
-        assert args.endpoint == "https://explorer-gql.cheqd.io/v1/graphql"
+        args = build_parser().parse_args(["--address", WALLET])
+        assert args.address == WALLET
+        assert args.endpoint == DEFAULT_ENDPOINT
         assert args.batch_size == 100
         assert args.max_transactions == 5000
         assert args.alias is None
@@ -37,7 +40,7 @@ class TestBuildParser:
     def test_alias_stored(self):
         from tax_tool import build_parser
 
-        args = build_parser().parse_args(["--address", "cheqd1abc", "--alias", "myval"])
+        args = build_parser().parse_args(["--address", WALLET, "--alias", "myval"])
         assert args.alias == "myval"
 
     def test_all_fetch_options(self):
@@ -46,7 +49,7 @@ class TestBuildParser:
         args = build_parser().parse_args(
             [
                 "--address",
-                "cheqd1abc",
+                WALLET,
                 "--endpoint",
                 "https://custom.example.com/v1/graphql",
                 "--batch-size",
@@ -65,7 +68,7 @@ class TestBuildParser:
         args = build_parser().parse_args(
             [
                 "--address",
-                "cheqd1abc",
+                WALLET,
                 "--input",
                 "txs.json",
                 "--archive-rest-api-url",
@@ -86,7 +89,7 @@ class TestBuildParser:
         args = build_parser().parse_args(
             [
                 "--address",
-                "cheqd1abc",
+                WALLET,
                 "--output-json",
                 "custom.json",
                 "--output-csv",
@@ -101,40 +104,37 @@ class TestResolveFilenames:
     def test_default_names_from_address(self):
         from tax_tool import resolve_filenames
 
-        args = Namespace(address="cheqd1abc", alias=None, output_json=None, output_csv=None)
-        assert resolve_filenames(args) == ("cheqd1abc.json", "cheqd1abc.csv")
+        args = Namespace(address=WALLET, alias=None, output_json=None, output_csv=None)
+        assert resolve_filenames(args) == (f"{WALLET}.json", f"{WALLET}.csv")
 
     def test_alias_overrides_address(self):
         from tax_tool import resolve_filenames
 
-        args = Namespace(address="cheqd1abc", alias="myval", output_json=None, output_csv=None)
+        args = Namespace(address=WALLET, alias="myval", output_json=None, output_csv=None)
         assert resolve_filenames(args) == ("myval.json", "myval.csv")
 
     def test_explicit_output_json_overrides_alias(self):
         from tax_tool import resolve_filenames
 
-        args = Namespace(address="cheqd1abc", alias="myval", output_json="custom.json", output_csv=None)
+        args = Namespace(address=WALLET, alias="myval", output_json="custom.json", output_csv=None)
         assert resolve_filenames(args) == ("custom.json", "myval.csv")
 
     def test_explicit_output_csv_overrides_alias(self):
         from tax_tool import resolve_filenames
 
-        args = Namespace(address="cheqd1abc", alias="myval", output_json=None, output_csv="custom.csv")
+        args = Namespace(address=WALLET, alias="myval", output_json=None, output_csv="custom.csv")
         assert resolve_filenames(args) == ("myval.json", "custom.csv")
 
     def test_both_explicit_overrides(self):
         from tax_tool import resolve_filenames
 
-        args = Namespace(address="cheqd1abc", alias="myval", output_json="a.json", output_csv="b.csv")
+        args = Namespace(address=WALLET, alias="myval", output_json="a.json", output_csv="b.csv")
         assert resolve_filenames(args) == ("a.json", "b.csv")
-
-
-DEFAULT_ENDPOINT = "https://explorer-gql.cheqd.io/v1/graphql"
 
 
 def make_args(**overrides):
     defaults = {
-        "address": "cheqd1abc",
+        "address": WALLET,
         "fetch_only": False,
         "convert_only": False,
         "endpoint": DEFAULT_ENDPOINT,
@@ -163,14 +163,21 @@ class TestRun:
 
         mock_fetcher_cls.assert_called_once_with(
             endpoint=DEFAULT_ENDPOINT,
-            address="cheqd1abc",
+            address=WALLET,
             batch_size=100,
             max_transactions=5000,
-            output_file="cheqd1abc.json",
+            output_file=f"{WALLET}.json",
         )
         mock_fetcher_cls.return_value.fetch_all.assert_called_once()
 
-        mock_converter_cls.assert_called_once_with("cheqd1abc.json", "cheqd1abc.csv", "cheqd1abc", False, None, None)
+        mock_converter_cls.assert_called_once_with(
+            input_file=f"{WALLET}.json",
+            output_file=f"{WALLET}.csv",
+            address=WALLET,
+            debug=False,
+            debug_hash=None,
+            archive_rest_api_url=None,
+        )
         mock_converter_cls.return_value.convert.assert_called_once()
 
     @patch("tax_tool.KoinlyConverter")
@@ -192,7 +199,14 @@ class TestRun:
         run(make_args(convert_only=True, input="existing.json"))
 
         mock_fetcher_cls.assert_not_called()
-        mock_converter_cls.assert_called_once_with("existing.json", "cheqd1abc.csv", "cheqd1abc", False, None, None)
+        mock_converter_cls.assert_called_once_with(
+            input_file="existing.json",
+            output_file=f"{WALLET}.csv",
+            address=WALLET,
+            debug=False,
+            debug_hash=None,
+            archive_rest_api_url=None,
+        )
         mock_converter_cls.return_value.convert.assert_called_once()
 
     def test_convert_only_without_input_exits_with_error(self):
@@ -211,12 +225,19 @@ class TestRun:
 
         mock_fetcher_cls.assert_called_once_with(
             endpoint=DEFAULT_ENDPOINT,
-            address="cheqd1abc",
+            address=WALLET,
             batch_size=100,
             max_transactions=5000,
             output_file="myval.json",
         )
-        mock_converter_cls.assert_called_once_with("myval.json", "myval.csv", "cheqd1abc", False, None, None)
+        mock_converter_cls.assert_called_once_with(
+            input_file="myval.json",
+            output_file="myval.csv",
+            address=WALLET,
+            debug=False,
+            debug_hash=None,
+            archive_rest_api_url=None,
+        )
 
     @patch("tax_tool.KoinlyConverter")
     @patch("tax_tool.TransactionFetcher")
@@ -228,10 +249,10 @@ class TestRun:
 
         mock_fetcher_cls.assert_called_once_with(
             endpoint="https://custom.example.com",
-            address="cheqd1abc",
+            address=WALLET,
             batch_size=100,
             max_transactions=5000,
-            output_file="cheqd1abc.json",
+            output_file=f"{WALLET}.json",
         )
 
     @patch("tax_tool.KoinlyConverter")
@@ -243,12 +264,12 @@ class TestRun:
         run(make_args(archive_rest_api_url="https://archive.example.com", debug=True, hash="ABC123"))
 
         mock_converter_cls.assert_called_once_with(
-            "cheqd1abc.json",
-            "cheqd1abc.csv",
-            "cheqd1abc",
-            True,
-            "ABC123",
-            "https://archive.example.com",
+            input_file=f"{WALLET}.json",
+            output_file=f"{WALLET}.csv",
+            address=WALLET,
+            debug=True,
+            debug_hash="ABC123",
+            archive_rest_api_url="https://archive.example.com",
         )
 
     @patch("tax_tool.KoinlyConverter")
@@ -269,4 +290,11 @@ class TestRun:
 
         run(make_args(convert_only=True, input="foo.json"))
 
-        mock_converter_cls.assert_called_once_with("foo.json", "cheqd1abc.csv", "cheqd1abc", False, None, None)
+        mock_converter_cls.assert_called_once_with(
+            input_file="foo.json",
+            output_file=f"{WALLET}.csv",
+            address=WALLET,
+            debug=False,
+            debug_hash=None,
+            archive_rest_api_url=None,
+        )
