@@ -1,5 +1,5 @@
 # HTTP requests for GraphQL API
-requests>=2.33.1
+requests>=2.34.0
 
 # Argument parsing is built-in (argparse)
 # Datetime handling is built-in (datetime)
